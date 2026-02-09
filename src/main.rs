@@ -1,4 +1,5 @@
 mod cli;
+mod workflow;
 
 use std::process;
 
@@ -14,5 +15,15 @@ fn main() {
         process::exit(1);
     }
 
-    println!("Parsing workflow file: {}", args.file.display());
+    match workflow::parse_workflow(&args.file) {
+        Ok(uses_refs) => {
+            for uses in &uses_refs {
+                println!("{uses}");
+            }
+        }
+        Err(e) => {
+            eprintln!("error: failed to parse workflow: {e}");
+            process::exit(1);
+        }
+    }
 }

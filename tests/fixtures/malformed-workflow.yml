@@ -1,0 +1,25 @@
+name: Malformed CI
+
+on: push
+
+jobs:
+  valid-job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        uses: actions/setup-node@v4
+
+  broken-steps:
+    runs-on: ubuntu-latest
+    steps: "this should be a list, not a string"
+
+  another-valid-job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine:3.18
+      - name: Run something
+        run: echo "hello"
+
+  missing-steps:
+    runs-on: ubuntu-latest
