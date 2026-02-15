@@ -92,7 +92,7 @@ fn malformed_workflow_warns_on_stderr() {
 
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("warning"),
+        stderr.contains("WARN"),
         "should warn about malformed job"
     );
     assert!(

@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::action_ref::{ActionRef, RefType};
 
@@ -16,6 +17,7 @@ impl GitHubClient {
         }
     }
 
+    #[instrument(skip(self), fields(action = %action.raw))]
     pub fn resolve_ref(&self, action: &ActionRef) -> Result<String> {
         if action.ref_type == RefType::Sha {
             return Ok(action.git_ref.clone());
@@ -50,6 +52,7 @@ impl GitHubClient {
         self.extract_commit_sha(&json, &action.owner, &action.repo)
     }
 
+    #[instrument(skip(self, ref_json))]
     fn extract_commit_sha(&self, ref_json: &Value, owner: &str, repo: &str) -> Result<String> {
         let obj = ref_json
             .get("object")
@@ -93,6 +96,7 @@ impl GitHubClient {
         self.api_get(url)
     }
 
+    #[instrument(skip(self))]
     fn api_get(&self, url: &str) -> Result<Value> {
         let mut request = self
             .agent

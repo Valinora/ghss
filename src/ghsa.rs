@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::{Advisory, AdvisoryProvider};
@@ -16,6 +17,7 @@ impl<'a> GhsaProvider<'a> {
 }
 
 impl AdvisoryProvider for GhsaProvider<'_> {
+    #[instrument(skip(self), fields(action = %action.raw))]
     fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
         let json = self
@@ -34,6 +36,7 @@ impl AdvisoryProvider for GhsaProvider<'_> {
     }
 }
 
+#[instrument(skip(json))]
 fn parse_advisories(json: &Value) -> Result<Vec<Advisory>> {
     let arr = json.as_array().context("expected JSON array from advisory API")?;
 

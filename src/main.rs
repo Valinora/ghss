@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 use std::process;
 
 use clap::Parser;
+use tracing::{error, warn};
+use tracing_subscriber::{fmt, EnvFilter};
 
 use cli::Cli;
 use ghss::action_ref::ActionRef;
@@ -14,14 +16,26 @@ use ghss::github::GitHubClient;
 fn main() {
     let args = Cli::parse();
 
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        let level = args.verbosity.tracing_level_filter();
+        EnvFilter::new(level.to_string())
+    });
+
+    fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .without_time()
+        .init();
+
     if !args.file.exists() {
-        eprintln!("error: file not found: {}", args.file.display());
+        error!(path = %args.file.display(), "file not found");
         process::exit(1);
     }
 
     let result = ghss::workflow::parse_workflow(&args.file);
     let Ok(uses_refs) = result else {
-        eprintln!("error: failed to parse workflow: {}", result.unwrap_err());
+        error!(error = %result.unwrap_err(), "failed to parse workflow");
         process::exit(1);
     };
 
@@ -35,7 +49,7 @@ fn main() {
         .filter_map(|raw| match ActionRef::parse(raw) {
             Ok(ar) => Some(ar),
             Err(e) => {
-                eprintln!("warning: failed to parse action reference '{}': {}", raw, e);
+                warn!(action = %raw, error = %e, "failed to parse action reference");
                 None
             }
         })
@@ -56,7 +70,7 @@ fn main() {
             .map(|action| match client.resolve_ref(action) {
                 Ok(sha) => Some(sha),
                 Err(e) => {
-                    eprintln!("warning: failed to resolve '{}': {}", action.raw, e);
+                    warn!(action = %action.raw, error = %e, "failed to resolve ref");
                     None
                 }
             })
@@ -74,7 +88,7 @@ fn main() {
             .map(|action| match provider.query(action) {
                 Ok(advisories) => advisories,
                 Err(e) => {
-                    eprintln!("warning: failed to query advisories for '{}': {}", action.raw, e);
+                    warn!(action = %action.raw, error = %e, "failed to query advisories");
                     Vec::new()
                 }
             })

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use tracing::{instrument, warn};
 
 #[derive(Deserialize)]
 pub struct Workflow {
@@ -22,6 +23,7 @@ pub struct Step {
     pub _extra: serde_yaml::Value,
 }
 
+#[instrument(skip(path), fields(path = %path.display()))]
 pub fn parse_workflow(path: &Path) -> anyhow::Result<Vec<String>> {
     let contents = std::fs::read_to_string(path)?;
     let workflow: Workflow = serde_yaml::from_str(&contents)?;
@@ -40,7 +42,7 @@ pub fn parse_workflow(path: &Path) -> anyhow::Result<Vec<String>> {
                 }
             }
             Err(e) => {
-                eprintln!("warning: failed to parse job '{}': {}", job_name, e);
+                warn!(job = %job_name, error = %e, "failed to parse job");
             }
         }
     }

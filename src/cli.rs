@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use clap_verbosity_flag::{Verbosity, WarnLevel};
 
 /// Audit GitHub Actions workflows for third-party action usage
 #[derive(Parser)]
@@ -21,4 +22,7 @@ pub struct Cli {
     /// GitHub personal access token (or set GITHUB_TOKEN env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     pub github_token: Option<String>,
+
+    #[command(flatten)]
+    pub verbosity: Verbosity<WarnLevel>,
 }
