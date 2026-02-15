@@ -43,11 +43,7 @@ fn main() {
 
     // Build GitHub client if needed for --resolve or --advisories
     let github_client = if args.resolve || args.advisories {
-        let Some(token) = &args.github_token else {
-            eprintln!("error: --github-token or GITHUB_TOKEN env var is required for --resolve/--advisories");
-            process::exit(1);
-        };
-        Some(GitHubClient::new(token.clone()))
+        Some(GitHubClient::new(args.github_token.clone()))
     } else {
         None
     };

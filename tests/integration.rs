@@ -121,23 +121,22 @@ fn no_file_arg_exits_with_error() {
 }
 
 #[test]
-fn resolve_without_token_exits_with_error() {
+fn resolve_without_token_does_not_require_token() {
     let output = ghss()
         .args(["--file", "tests/fixtures/sample-workflow.yml", "--resolve"])
         .env_remove("GITHUB_TOKEN")
         .output()
         .expect("failed to execute");
 
-    assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("GITHUB_TOKEN"),
-        "should mention GITHUB_TOKEN in error"
+        !stderr.contains("--github-token or GITHUB_TOKEN"),
+        "should not hard-fail on missing token"
     );
 }
 
 #[test]
-fn advisories_without_token_exits_with_error() {
+fn advisories_without_token_does_not_require_token() {
     let output = ghss()
         .args([
             "--file",
@@ -148,11 +147,10 @@ fn advisories_without_token_exits_with_error() {
         .output()
         .expect("failed to execute");
 
-    assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("GITHUB_TOKEN"),
-        "should mention GITHUB_TOKEN in error"
+        !stderr.contains("--github-token or GITHUB_TOKEN"),
+        "should not hard-fail on missing token"
     );
 }
 

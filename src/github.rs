@@ -5,11 +5,11 @@ use crate::action_ref::{ActionRef, RefType};
 
 pub struct GitHubClient {
     agent: ureq::Agent,
-    token: String,
+    token: Option<String>,
 }
 
 impl GitHubClient {
-    pub fn new(token: String) -> Self {
+    pub fn new(token: Option<String>) -> Self {
         Self {
             agent: ureq::Agent::new(),
             token,
@@ -94,12 +94,15 @@ impl GitHubClient {
     }
 
     fn api_get(&self, url: &str) -> Result<Value> {
-        let response = self
+        let mut request = self
             .agent
             .get(url)
-            .set("Authorization", &format!("Bearer {}", self.token))
             .set("Accept", "application/vnd.github+json")
-            .set("User-Agent", "ghss")
+            .set("User-Agent", "ghss");
+        if let Some(token) = &self.token {
+            request = request.set("Authorization", &format!("Bearer {}", token));
+        }
+        let response = request
             .call()
             .map_err(|e| match e {
                 ureq::Error::Status(status, _resp) => {
@@ -120,7 +123,7 @@ mod tests {
 
     #[test]
     fn sha_ref_returns_immediately() {
-        let client = GitHubClient::new("fake".into());
+        let client = GitHubClient::new(Some("fake".into()));
         let action = ActionRef::parse(
             "actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11",
         )
@@ -131,7 +134,7 @@ mod tests {
 
     #[test]
     fn extract_commit_sha_lightweight_tag() {
-        let client = GitHubClient::new("fake".into());
+        let client = GitHubClient::new(Some("fake".into()));
         let ref_json = json!({
             "ref": "refs/tags/v4",
             "object": {
@@ -146,7 +149,7 @@ mod tests {
 
     #[test]
     fn extract_commit_sha_unexpected_type() {
-        let client = GitHubClient::new("fake".into());
+        let client = GitHubClient::new(Some("fake".into()));
         let ref_json = json!({
             "ref": "refs/tags/v4",
             "object": {
@@ -162,7 +165,7 @@ mod tests {
 
     #[test]
     fn extract_commit_sha_missing_object() {
-        let client = GitHubClient::new("fake".into());
+        let client = GitHubClient::new(Some("fake".into()));
         let ref_json = json!({"ref": "refs/tags/v4"});
 
         let result = client.extract_commit_sha(&ref_json, "actions", "checkout");
