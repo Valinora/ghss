@@ -1,24 +1,15 @@
-mod action_ref;
-mod advisory;
 mod cli;
-mod ghsa;
-mod github;
-mod workflow;
 
 use std::collections::BTreeSet;
 use std::process;
 
 use clap::Parser;
 
-use action_ref::ActionRef;
-use advisory::{Advisory, AdvisoryProvider};
 use cli::Cli;
-use ghsa::GhsaProvider;
-use github::GitHubClient;
-
-fn is_third_party(uses: &str) -> bool {
-    !uses.starts_with("./") && !uses.starts_with("docker://")
-}
+use ghss::action_ref::ActionRef;
+use ghss::advisory::{Advisory, AdvisoryProvider};
+use ghss::ghsa::GhsaProvider;
+use ghss::github::GitHubClient;
 
 fn main() {
     let args = Cli::parse();
@@ -28,7 +19,7 @@ fn main() {
         process::exit(1);
     }
 
-    let result = workflow::parse_workflow(&args.file);
+    let result = ghss::workflow::parse_workflow(&args.file);
     let Ok(uses_refs) = result else {
         eprintln!("error: failed to parse workflow: {}", result.unwrap_err());
         process::exit(1);
@@ -36,7 +27,7 @@ fn main() {
 
     let unique: BTreeSet<_> = uses_refs
         .into_iter()
-        .filter(|u| is_third_party(u))
+        .filter(|u| ghss::is_third_party(u))
         .collect();
 
     let action_refs: Vec<ActionRef> = unique
@@ -119,28 +110,5 @@ fn main() {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn third_party_actions_are_detected() {
-        assert!(is_third_party("actions/checkout@v4"));
-        assert!(is_third_party("codecov/codecov-action@v3"));
-    }
-
-    #[test]
-    fn local_actions_are_not_third_party() {
-        assert!(!is_third_party("./local-action"));
-        assert!(!is_third_party("./path/to/action"));
-    }
-
-    #[test]
-    fn docker_actions_are_not_third_party() {
-        assert!(!is_third_party("docker://node:18"));
-        assert!(!is_third_party("docker://alpine:3.18"));
     }
 }
