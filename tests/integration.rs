@@ -119,3 +119,53 @@ fn no_file_arg_exits_with_error() {
 
     assert!(!output.status.success());
 }
+
+#[test]
+fn resolve_without_token_exits_with_error() {
+    let output = ghss()
+        .args(["--file", "tests/fixtures/sample-workflow.yml", "--resolve"])
+        .env_remove("GITHUB_TOKEN")
+        .output()
+        .expect("failed to execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("GITHUB_TOKEN"),
+        "should mention GITHUB_TOKEN in error"
+    );
+}
+
+#[test]
+fn advisories_without_token_exits_with_error() {
+    let output = ghss()
+        .args([
+            "--file",
+            "tests/fixtures/sample-workflow.yml",
+            "--advisories",
+        ])
+        .env_remove("GITHUB_TOKEN")
+        .output()
+        .expect("failed to execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("GITHUB_TOKEN"),
+        "should mention GITHUB_TOKEN in error"
+    );
+}
+
+#[test]
+fn sha_pinned_workflow_lists_actions() {
+    let output = ghss()
+        .args(["--file", "tests/fixtures/sha-pinned-workflow.yml"])
+        .output()
+        .expect("failed to execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"));
+    assert!(stdout.contains("actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"));
+    assert!(stdout.contains("codecov/codecov-action@v3"));
+}
