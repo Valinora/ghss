@@ -12,6 +12,7 @@ use ghss::action_ref::ActionRef;
 use ghss::advisory::{Advisory, AdvisoryProvider};
 use ghss::ghsa::GhsaProvider;
 use ghss::github::GitHubClient;
+use ghss::output;
 
 fn main() {
     let args = Cli::parse();
@@ -21,12 +22,22 @@ fn main() {
         EnvFilter::new(level.to_string())
     });
 
-    fmt()
-        .with_env_filter(env_filter)
-        .with_writer(std::io::stderr)
-        .with_target(false)
-        .without_time()
-        .init();
+    if args.json {
+        fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .with_target(false)
+            .without_time()
+            .init();
+    } else {
+        fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .with_target(false)
+            .without_time()
+            .init();
+    }
 
     if !args.file.exists() {
         error!(path = %args.file.display(), "file not found");
@@ -98,27 +109,22 @@ fn main() {
     };
 
     // Output
-    for (i, action) in action_refs.iter().enumerate() {
-        println!("{}", action.raw);
-
-        if let Some(sha) = &resolved_shas[i] {
-            println!("  sha: {sha}");
-        }
-
-        if args.advisories {
-            let advs = &advisories_per_action[i];
-            if advs.is_empty() {
-                println!("  advisories: none");
+    let entries: Vec<output::ActionEntry> = action_refs
+        .iter()
+        .enumerate()
+        .map(|(i, action)| output::ActionEntry {
+            action,
+            resolved_sha: resolved_shas[i].as_deref(),
+            advisories: if args.advisories {
+                Some(&advisories_per_action[i])
             } else {
-                for adv in advs {
-                    print!("  {} ({}): {}", adv.id, adv.severity, adv.summary);
-                    println!();
-                    println!("    {}", adv.url);
-                    if let Some(range) = &adv.affected_range {
-                        println!("    affected: {range}");
-                    }
-                }
-            }
-        }
-    }
+                None
+            },
+        })
+        .collect();
+
+    let formatter = output::formatter(args.json, args.advisories);
+    formatter
+        .write_results(&entries, &mut std::io::stdout().lock())
+        .expect("failed to write output");
 }

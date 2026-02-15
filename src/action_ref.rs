@@ -1,13 +1,15 @@
 use anyhow::{bail, Result};
+use serde::Serialize;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RefType {
     Sha,
     Tag,
     Unknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ActionRef {
     pub raw: String,
     pub owner: String,

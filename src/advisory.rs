@@ -1,5 +1,8 @@
+use serde::Serialize;
+
 use crate::action_ref::ActionRef;
 
+#[derive(Serialize)]
 pub struct Advisory {
     pub id: String,
     pub summary: String,

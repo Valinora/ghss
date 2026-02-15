@@ -167,3 +167,76 @@ fn sha_pinned_workflow_lists_actions() {
     assert!(stdout.contains("actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"));
     assert!(stdout.contains("codecov/codecov-action@v3"));
 }
+
+#[test]
+fn json_flag_outputs_valid_json_array() {
+    let output = ghss()
+        .args(["--file", "tests/fixtures/sample-workflow.yml", "--json"])
+        .output()
+        .expect("failed to execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let arr = parsed.as_array().expect("should be a JSON array");
+    assert_eq!(arr.len(), 3);
+
+    // Verify expected fields are present
+    for entry in arr {
+        assert!(entry.get("raw").is_some(), "each entry should have 'raw'");
+        assert!(entry.get("owner").is_some(), "each entry should have 'owner'");
+        assert!(entry.get("repo").is_some(), "each entry should have 'repo'");
+        assert!(entry.get("git_ref").is_some(), "each entry should have 'git_ref'");
+        assert!(entry.get("ref_type").is_some(), "each entry should have 'ref_type'");
+    }
+
+    // Verify specific actions are present
+    let raws: Vec<&str> = arr.iter().map(|e| e["raw"].as_str().unwrap()).collect();
+    assert!(raws.contains(&"actions/checkout@v4"));
+    assert!(raws.contains(&"actions/setup-node@v4"));
+    assert!(raws.contains(&"codecov/codecov-action@v3"));
+}
+
+#[test]
+fn json_output_omits_optional_fields() {
+    let output = ghss()
+        .args(["--file", "tests/fixtures/sample-workflow.yml", "--json"])
+        .output()
+        .expect("failed to execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let arr = parsed.as_array().unwrap();
+
+    for entry in arr {
+        assert!(
+            entry.get("resolved_sha").is_none(),
+            "resolved_sha should be absent when --resolve not used"
+        );
+        assert!(
+            entry.get("advisories").is_none(),
+            "advisories should be absent when --advisories not used"
+        );
+    }
+}
+
+#[test]
+fn json_flag_produces_json_tracing_on_stderr() {
+    let output = ghss()
+        .args(["--file", "tests/fixtures/malformed-workflow.yml", "--json"])
+        .output()
+        .expect("failed to execute");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    // Each non-empty line on stderr should be valid JSON (structured tracing)
+    let lines: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(!lines.is_empty(), "malformed workflow should produce log output");
+    for line in &lines {
+        assert!(
+            serde_json::from_str::<serde_json::Value>(line).is_ok(),
+            "stderr line should be valid JSON: {line}"
+        );
+    }
+}

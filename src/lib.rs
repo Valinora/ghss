@@ -2,6 +2,7 @@ pub mod action_ref;
 pub mod advisory;
 pub mod ghsa;
 pub mod github;
+pub mod output;
 pub mod workflow;
 
 pub fn is_third_party(uses: &str) -> bool {

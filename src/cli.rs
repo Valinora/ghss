@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(long)]
     pub advisories: bool,
 
+    /// Output results and logs in JSON format
+    #[arg(long)]
+    pub json: bool,
+
     /// GitHub personal access token (or set GITHUB_TOKEN env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     pub github_token: Option<String>,
