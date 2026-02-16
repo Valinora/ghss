@@ -126,6 +126,45 @@ impl GitHubClient {
             .await?
             .ok_or_else(|| anyhow::anyhow!("{url} returned HTTP 404"))
     }
+
+    /// Send a GraphQL query to the GitHub API. Requires authentication.
+    #[instrument(skip(self, query))]
+    pub async fn graphql_post(&self, query: &str) -> Result<Value> {
+        let token = self
+            .token
+            .as_ref()
+            .context("GitHub token is required for GraphQL API")?;
+
+        let body = serde_json::json!({ "query": query });
+
+        let response = self
+            .client
+            .post("https://api.github.com/graphql")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .json(&body)
+            .send()
+            .await
+            .context("GraphQL request failed")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            bail!("GraphQL API returned HTTP {status}");
+        }
+
+        let json: Value = response
+            .json()
+            .await
+            .context("failed to parse GraphQL response")?;
+
+        if let Some(errors) = json.get("errors") {
+            bail!("GraphQL errors: {errors}");
+        }
+
+        json.get("data")
+            .cloned()
+            .context("missing 'data' field in GraphQL response")
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +221,16 @@ mod tests {
 
         let result = client.extract_commit_sha(&ref_json, "actions", "checkout").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn graphql_post_errors_without_token() {
+        let client = GitHubClient::new(None);
+        let result = client.graphql_post("{ viewer { login } }").await;
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("token is required"),
+            "expected token error, got: {err}"
+        );
     }
 }

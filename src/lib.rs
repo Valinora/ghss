@@ -10,6 +10,8 @@ pub mod github;
 pub mod osv;
 #[path = "lib/output.rs"]
 pub mod output;
+#[path = "lib/scan.rs"]
+pub mod scan;
 #[path = "lib/workflow.rs"]
 pub mod workflow;
 
@@ -21,6 +23,8 @@ use anyhow::bail;
 use futures::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::warn;
+
+pub use scan::scan_action;
 
 use action_ref::ActionRef;
 use advisory::{deduplicate_advisories, AdvisoryProvider};
