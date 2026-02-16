@@ -6,6 +6,8 @@ pub mod advisory;
 pub mod ghsa;
 #[path = "lib/github.rs"]
 pub mod github;
+#[path = "lib/osv.rs"]
+pub mod osv;
 #[path = "lib/output.rs"]
 pub mod output;
 #[path = "lib/workflow.rs"]

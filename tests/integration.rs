@@ -113,12 +113,11 @@ fn no_file_arg_exits_with_error() {
 }
 
 #[test]
-fn advisories_without_token_does_not_require_token() {
+fn advisories_run_without_token() {
     let output = ghss()
         .args([
             "--file",
             "tests/fixtures/sample-workflow.yml",
-            "--advisories",
         ])
         .env_remove("GITHUB_TOKEN")
         .output()
@@ -163,15 +162,15 @@ fn json_flag_outputs_valid_json_array() {
 }
 
 #[test]
-fn json_output_omits_advisories_when_not_requested() {
+fn json_output_always_includes_advisories_key() {
     let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let arr = parsed.as_array().unwrap();
 
     for entry in arr {
         assert!(
-            entry.get("advisories").is_none(),
-            "advisories should be absent when --advisories not used"
+            entry.get("advisories").is_some(),
+            "advisories should always be present in JSON output"
         );
     }
 }
@@ -184,7 +183,6 @@ fn vulnerable_workflow_reports_known_advisories() {
     let stdout = stdout_of(&[
         "--file",
         "tests/fixtures/vulnerable-workflow.yml",
-        "--advisories",
     ]);
 
     // tj-actions/changed-files@v35 has known advisories
@@ -208,6 +206,32 @@ fn vulnerable_workflow_reports_known_advisories() {
         stdout.contains("actions/checkout@v4\n  sha:") && stdout.contains("advisories: none"),
         "actions/checkout@v4 should have no advisories"
     );
+}
+
+#[test]
+fn provider_osv_flag_is_accepted() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--provider", "osv"]);
+    assert!(output.status.success(), "--provider osv should be accepted");
+}
+
+#[test]
+fn provider_ghsa_flag_is_accepted() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--provider", "ghsa"]);
+    assert!(output.status.success(), "--provider ghsa should be accepted");
+}
+
+#[test]
+fn provider_all_flag_is_accepted() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--provider", "all"]);
+    assert!(output.status.success(), "--provider all should be accepted");
+}
+
+#[test]
+fn unknown_provider_exits_with_error() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--provider", "bogus"]);
+    assert!(!output.status.success(), "unknown provider should fail");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unknown provider"), "should mention unknown provider");
 }
 
 #[test]

@@ -9,8 +9,7 @@ pub struct ActionEntry {
     pub action: ActionRef,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_sha: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub advisories: Option<Vec<Advisory>>,
+    pub advisories: Vec<Advisory>,
 }
 
 pub trait OutputFormatter {
@@ -21,9 +20,7 @@ pub trait OutputFormatter {
     ) -> std::io::Result<()>;
 }
 
-pub struct TextOutput {
-    pub show_advisories: bool,
-}
+pub struct TextOutput;
 
 impl OutputFormatter for TextOutput {
     fn write_results(
@@ -38,15 +35,11 @@ impl OutputFormatter for TextOutput {
                 writeln!(writer, "  sha: {sha}")?;
             }
 
-            if self.show_advisories {
-                if let Some(advs) = &entry.advisories {
-                    if advs.is_empty() {
-                        writeln!(writer, "  advisories: none")?;
-                    } else {
-                        for adv in advs {
-                            writeln!(writer, "  {adv}")?;
-                        }
-                    }
+            if entry.advisories.is_empty() {
+                writeln!(writer, "  advisories: none")?;
+            } else {
+                for adv in &entry.advisories {
+                    writeln!(writer, "  {adv}")?;
                 }
             }
         }
@@ -68,11 +61,11 @@ impl OutputFormatter for JsonOutput {
     }
 }
 
-pub fn formatter(json: bool, show_advisories: bool) -> Box<dyn OutputFormatter> {
+pub fn formatter(json: bool) -> Box<dyn OutputFormatter> {
     if json {
         Box::new(JsonOutput)
     } else {
-        Box::new(TextOutput { show_advisories })
+        Box::new(TextOutput)
     }
 }
 
@@ -90,14 +83,14 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: None,
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
-        let fmt = TextOutput {
-            show_advisories: false,
-        };
+        let fmt = TextOutput;
         fmt.write_results(&entries, &mut buf).unwrap();
-        assert_eq!(String::from_utf8(buf).unwrap(), "actions/checkout@v4\n");
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("actions/checkout@v4"));
+        assert!(output.contains("advisories: none"));
     }
 
     #[test]
@@ -105,12 +98,10 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: Some("abc123".to_string()),
-            advisories: None,
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
-        let fmt = TextOutput {
-            show_advisories: false,
-        };
+        let fmt = TextOutput;
         fmt.write_results(&entries, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("actions/checkout@v4"));
@@ -122,12 +113,10 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: Some(vec![]),
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
-        let fmt = TextOutput {
-            show_advisories: true,
-        };
+        let fmt = TextOutput;
         fmt.write_results(&entries, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("advisories: none"));
@@ -138,19 +127,17 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: Some(vec![Advisory {
+            advisories: vec![Advisory {
                 id: "GHSA-1234".to_string(),
                 summary: "Bad thing".to_string(),
                 severity: "high".to_string(),
                 url: "https://ghsa.example.com/1234".to_string(),
                 affected_range: Some(">= 1.0, < 2.0".to_string()),
                 source: "ghsa".to_string(),
-            }]),
+            }],
         }];
         let mut buf = Vec::new();
-        let fmt = TextOutput {
-            show_advisories: true,
-        };
+        let fmt = TextOutput;
         fmt.write_results(&entries, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("GHSA-1234 (high): Bad thing"));
@@ -163,7 +150,7 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: None,
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -176,9 +163,10 @@ mod tests {
         assert_eq!(arr[0]["owner"], "actions");
         assert_eq!(arr[0]["repo"], "checkout");
         assert_eq!(arr[0]["ref_type"], "tag");
-        // Optional fields should be absent
+        // resolved_sha should be absent when None
         assert!(arr[0].get("resolved_sha").is_none());
-        assert!(arr[0].get("advisories").is_none());
+        // advisories is always present (now a Vec, not Option)
+        assert!(arr[0].get("advisories").is_some());
     }
 
     #[test]
@@ -186,14 +174,14 @@ mod tests {
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: Some("deadbeef".to_string()),
-            advisories: Some(vec![Advisory {
+            advisories: vec![Advisory {
                 id: "GHSA-1234".to_string(),
                 summary: "Bad thing".to_string(),
                 severity: "high".to_string(),
                 url: "https://ghsa.example.com/1234".to_string(),
                 affected_range: Some(">= 1.0".to_string()),
                 source: "ghsa".to_string(),
-            }]),
+            }],
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -207,11 +195,11 @@ mod tests {
 
     #[test]
     fn factory_returns_json() {
-        let f = formatter(true, false);
+        let f = formatter(true);
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: None,
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
@@ -222,15 +210,16 @@ mod tests {
 
     #[test]
     fn factory_returns_text() {
-        let f = formatter(false, false);
+        let f = formatter(false);
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
-            advisories: None,
+            advisories: vec![],
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
-        assert_eq!(output, "actions/checkout@v4\n");
+        assert!(output.contains("actions/checkout@v4"));
+        assert!(output.contains("advisories: none"));
     }
 }

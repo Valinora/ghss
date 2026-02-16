@@ -9,6 +9,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 use ghss::advisory::AdvisoryProvider;
 use ghss::ghsa::GhsaProvider;
 use ghss::github::GitHubClient;
+use ghss::osv::OsvProvider;
 use ghss::output;
 
 /// Audit GitHub Actions workflows for third-party action usage
@@ -19,9 +20,9 @@ struct Cli {
     #[arg(short, long)]
     file: PathBuf,
 
-    /// Look up known security advisories for each action
-    #[arg(long)]
-    advisories: bool,
+    /// Advisory provider to use (ghsa, osv, or all)
+    #[arg(long, default_value = "all")]
+    provider: String,
 
     /// Output results and logs in JSON format
     #[arg(long)]
@@ -67,10 +68,14 @@ fn run(args: &Cli) -> anyhow::Result<()> {
 
     let github_client = GitHubClient::new(args.github_token.clone());
 
-    let advisory_provider: Option<GhsaProvider> = if args.advisories {
-        Some(GhsaProvider::new_borrowed(&github_client))
-    } else {
-        None
+    let providers: Vec<Box<dyn AdvisoryProvider + '_>> = match args.provider.as_str() {
+        "ghsa" => vec![Box::new(GhsaProvider::new_borrowed(&github_client))],
+        "osv" => vec![Box::new(OsvProvider::new())],
+        "all" => vec![
+            Box::new(GhsaProvider::new_borrowed(&github_client)),
+            Box::new(OsvProvider::new()),
+        ],
+        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
     };
 
     let entries: Vec<output::ActionEntry> = actions
@@ -84,17 +89,16 @@ fn run(args: &Cli) -> anyhow::Result<()> {
                 }
             };
 
-            let advisories = if let Some(provider) = &advisory_provider {
+            let mut advisories = Vec::new();
+            for provider in &providers {
                 match provider.query(&action) {
-                    Ok(advs) => Some(advs),
+                    Ok(advs) => advisories.extend(advs),
                     Err(e) => {
-                        warn!(action = %action.raw, error = %e, "failed to query advisories");
-                        Some(Vec::new())
+                        warn!(action = %action.raw, provider = provider.name(), error = %e, "failed to query advisories");
                     }
                 }
-            } else {
-                None
-            };
+            }
+            advisories.dedup_by(|a, b| a.id == b.id);
 
             output::ActionEntry {
                 action,
@@ -104,7 +108,7 @@ fn run(args: &Cli) -> anyhow::Result<()> {
         })
         .collect();
 
-    let formatter = output::formatter(args.json, args.advisories);
+    let formatter = output::formatter(args.json);
     formatter
         .write_results(&entries, &mut std::io::stdout().lock())
         .expect("failed to write output");
