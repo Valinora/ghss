@@ -15,10 +15,18 @@ pub mod workflow;
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 
+use anyhow::bail;
+use futures::future::join_all;
+use tokio::sync::Semaphore;
 use tracing::warn;
 
 use action_ref::ActionRef;
+use advisory::{deduplicate_advisories, AdvisoryProvider};
+use ghsa::GhsaProvider;
+use github::GitHubClient;
+use osv::OsvProvider;
 
 fn is_third_party(uses: &str) -> bool {
     !uses.starts_with("./") && !uses.starts_with("docker://")
@@ -42,6 +50,80 @@ pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
     Ok(unique.into_iter().collect())
 }
 
+/// Build advisory providers from a provider name string.
+///
+/// Valid values: `"ghsa"`, `"osv"`, `"all"`.
+pub fn create_providers(
+    provider: &str,
+    github_client: &GitHubClient,
+) -> anyhow::Result<Vec<Arc<dyn AdvisoryProvider>>> {
+    match provider {
+        "ghsa" => Ok(vec![Arc::new(GhsaProvider::new(github_client.clone()))]),
+        "osv" => Ok(vec![Arc::new(OsvProvider::new())]),
+        "all" => Ok(vec![
+            Arc::new(GhsaProvider::new(github_client.clone())),
+            Arc::new(OsvProvider::new()),
+        ]),
+        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
+    }
+}
+
+/// Run the full audit pipeline: resolve refs, query advisories, deduplicate.
+pub async fn audit_actions(
+    actions: Vec<ActionRef>,
+    providers: &[Arc<dyn AdvisoryProvider>],
+    github_client: &GitHubClient,
+) -> Vec<output::ActionEntry> {
+    let sem = Arc::new(Semaphore::new(10));
+
+    let futures: Vec<_> = actions
+        .into_iter()
+        .map(|action| {
+            let client = github_client.clone();
+            let providers: Vec<Arc<dyn AdvisoryProvider>> = providers.to_vec();
+            let sem = sem.clone();
+
+            async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+
+                let resolved_sha = match client.resolve_ref(&action).await {
+                    Ok(sha) => Some(sha),
+                    Err(e) => {
+                        warn!(action = %action.raw, error = %e, "failed to resolve ref");
+                        None
+                    }
+                };
+
+                let advisory_results = join_all(providers.iter().map(|p| {
+                    let p = p.clone();
+                    let action = action.clone();
+                    async move { (p.name().to_string(), p.query(&action).await) }
+                }))
+                .await;
+
+                let mut advisories = Vec::new();
+                for (provider_name, result) in advisory_results {
+                    match result {
+                        Ok(advs) => advisories.extend(advs),
+                        Err(e) => {
+                            warn!(action = %action.raw, provider = %provider_name, error = %e, "failed to query advisories");
+                        }
+                    }
+                }
+                let advisories = deduplicate_advisories(advisories);
+
+                output::ActionEntry {
+                    action,
+                    resolved_sha,
+                    advisories,
+                }
+            }
+        })
+        .collect();
+
+    join_all(futures).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +144,36 @@ mod tests {
     fn docker_actions_are_not_third_party() {
         assert!(!is_third_party("docker://node:18"));
         assert!(!is_third_party("docker://alpine:3.18"));
+    }
+
+    #[test]
+    fn create_providers_ghsa() {
+        let client = GitHubClient::new(None);
+        let providers = create_providers("ghsa", &client).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name(), "GHSA");
+    }
+
+    #[test]
+    fn create_providers_osv() {
+        let client = GitHubClient::new(None);
+        let providers = create_providers("osv", &client).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name(), "OSV");
+    }
+
+    #[test]
+    fn create_providers_all() {
+        let client = GitHubClient::new(None);
+        let providers = create_providers("all", &client).unwrap();
+        assert_eq!(providers.len(), 2);
+    }
+
+    #[test]
+    fn create_providers_unknown_errors() {
+        let client = GitHubClient::new(None);
+        let result = create_providers("invalid", &client);
+        let err = result.err().expect("should be an error");
+        assert!(err.to_string().contains("unknown provider"));
     }
 }
