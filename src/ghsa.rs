@@ -1,10 +1,26 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::Value;
 use tracing::instrument;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::{Advisory, AdvisoryProvider};
-use crate::github::GitHubClient;
+use crate::github::{GitHubClient, GITHUB_API_BASE};
+
+#[derive(Deserialize)]
+struct GhsaAdvisoryResponse {
+    ghsa_id: Option<String>,
+    summary: Option<String>,
+    severity: Option<String>,
+    html_url: Option<String>,
+    #[serde(default)]
+    vulnerabilities: Vec<GhsaVulnerability>,
+}
+
+#[derive(Deserialize)]
+struct GhsaVulnerability {
+    vulnerable_version_range: Option<String>,
+}
 
 pub struct GhsaProvider<'a> {
     client: &'a GitHubClient,
@@ -22,13 +38,12 @@ impl AdvisoryProvider for GhsaProvider<'_> {
         let package_name = action.package_name();
         let json = self
             .client
-            .api_get_public(&format!(
-                "https://api.github.com/advisories?ecosystem=actions&affects={}",
-                package_name
+            .api_get(&format!(
+                "{GITHUB_API_BASE}/advisories?ecosystem=actions&affects={package_name}"
             ))
-            .with_context(|| format!("failed to query advisories for {}", package_name))?;
+            .with_context(|| format!("failed to query advisories for {package_name}"))?;
 
-        parse_advisories(&json)
+        parse_advisories(json)
     }
 
     fn name(&self) -> &str {
@@ -37,56 +52,28 @@ impl AdvisoryProvider for GhsaProvider<'_> {
 }
 
 #[instrument(skip(json))]
-fn parse_advisories(json: &Value) -> Result<Vec<Advisory>> {
-    let arr = json.as_array().context("expected JSON array from advisory API")?;
+fn parse_advisories(json: Value) -> Result<Vec<Advisory>> {
+    let responses: Vec<GhsaAdvisoryResponse> = serde_json::from_value(json)
+        .context("expected JSON array from advisory API")?;
 
-    let mut advisories = Vec::new();
-    for item in arr {
-        let id = item
-            .get("ghsa_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+    let advisories = responses
+        .into_iter()
+        .map(|item| {
+            let affected_range = item
+                .vulnerabilities
+                .into_iter()
+                .find_map(|v| v.vulnerable_version_range);
 
-        let summary = item
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let severity = item
-            .get("severity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let url = item
-            .get("html_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Extract affected version range from vulnerabilities array
-        let affected_range = item
-            .get("vulnerabilities")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| {
-                arr.iter().find_map(|vuln| {
-                    vuln.get("vulnerable_version_range")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
-            });
-
-        advisories.push(Advisory {
-            id,
-            summary,
-            severity,
-            url,
-            affected_range,
-            source: "GHSA".to_string(),
-        });
-    }
+            Advisory {
+                id: item.ghsa_id.unwrap_or_else(|| "unknown".to_string()),
+                summary: item.summary.unwrap_or_default(),
+                severity: item.severity.unwrap_or_else(|| "unknown".to_string()),
+                url: item.html_url.unwrap_or_default(),
+                affected_range,
+                source: "GHSA".to_string(),
+            }
+        })
+        .collect();
 
     Ok(advisories)
 }
@@ -99,7 +86,7 @@ mod tests {
     #[test]
     fn parse_empty_advisory_response() {
         let json = json!([]);
-        let advisories = parse_advisories(&json).unwrap();
+        let advisories = parse_advisories(json).unwrap();
         assert!(advisories.is_empty());
     }
 
@@ -119,7 +106,7 @@ mod tests {
             }]
         }]);
 
-        let advisories = parse_advisories(&json).unwrap();
+        let advisories = parse_advisories(json).unwrap();
         assert_eq!(advisories.len(), 1);
 
         let a = &advisories[0];
@@ -140,7 +127,7 @@ mod tests {
             "html_url": "https://example.com"
         }]);
 
-        let advisories = parse_advisories(&json).unwrap();
+        let advisories = parse_advisories(json).unwrap();
         assert_eq!(advisories.len(), 1);
         assert!(advisories[0].affected_range.is_none());
     }
@@ -162,7 +149,7 @@ mod tests {
             }
         ]);
 
-        let advisories = parse_advisories(&json).unwrap();
+        let advisories = parse_advisories(json).unwrap();
         assert_eq!(advisories.len(), 2);
         assert_eq!(advisories[0].id, "GHSA-aaaa-bbbb-cccc");
         assert_eq!(advisories[1].id, "GHSA-dddd-eeee-ffff");
@@ -171,6 +158,6 @@ mod tests {
     #[test]
     fn parse_non_array_returns_error() {
         let json = json!({"error": "bad request"});
-        assert!(parse_advisories(&json).is_err());
+        assert!(parse_advisories(json).is_err());
     }
 }

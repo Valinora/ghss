@@ -1,3 +1,6 @@
+use std::fmt;
+use std::str::FromStr;
+
 use anyhow::{bail, Result};
 use serde::Serialize;
 
@@ -7,6 +10,16 @@ pub enum RefType {
     Sha,
     Tag,
     Unknown,
+}
+
+impl fmt::Display for RefType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RefType::Sha => write!(f, "sha"),
+            RefType::Tag => write!(f, "tag"),
+            RefType::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -19,8 +32,10 @@ pub struct ActionRef {
     pub ref_type: RefType,
 }
 
-impl ActionRef {
-    pub fn parse(raw: &str) -> Result<Self> {
+impl FromStr for ActionRef {
+    type Err = anyhow::Error;
+
+    fn from_str(raw: &str) -> Result<Self> {
         let Some((name_part, git_ref)) = raw.split_once('@') else {
             bail!("missing '@' in action reference: {raw}");
         };
@@ -49,7 +64,15 @@ impl ActionRef {
             ref_type,
         })
     }
+}
 
+impl fmt::Display for ActionRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.raw)
+    }
+}
+
+impl ActionRef {
     pub fn package_name(&self) -> String {
         match &self.path {
             Some(p) => format!("{}/{}/{}", self.owner, self.repo, p),
@@ -85,7 +108,7 @@ mod tests {
 
     #[test]
     fn parse_simple_action() {
-        let ar = ActionRef::parse("actions/checkout@v4").unwrap();
+        let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
         assert_eq!(ar.owner, "actions");
         assert_eq!(ar.repo, "checkout");
         assert!(ar.path.is_none());
@@ -95,7 +118,7 @@ mod tests {
 
     #[test]
     fn parse_action_with_subpath() {
-        let ar = ActionRef::parse("google-github-actions/auth/slim@v2").unwrap();
+        let ar: ActionRef = "google-github-actions/auth/slim@v2".parse().unwrap();
         assert_eq!(ar.owner, "google-github-actions");
         assert_eq!(ar.repo, "auth");
         assert_eq!(ar.path, Some("slim".to_string()));
@@ -107,51 +130,73 @@ mod tests {
     fn parse_sha_ref() {
         let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
         let raw = format!("actions/checkout@{sha}");
-        let ar = ActionRef::parse(&raw).unwrap();
+        let ar: ActionRef = raw.parse().unwrap();
         assert_eq!(ar.ref_type, RefType::Sha);
         assert_eq!(ar.git_ref, sha);
     }
 
     #[test]
     fn parse_tag_ref() {
-        let ar = ActionRef::parse("codecov/codecov-action@v3.1.0").unwrap();
+        let ar: ActionRef = "codecov/codecov-action@v3.1.0".parse().unwrap();
         assert_eq!(ar.ref_type, RefType::Tag);
         assert_eq!(ar.version(), Some("3.1.0"));
     }
 
     #[test]
     fn parse_tag_without_v_prefix() {
-        let ar = ActionRef::parse("some/action@2.0").unwrap();
+        let ar: ActionRef = "some/action@2.0".parse().unwrap();
         assert_eq!(ar.ref_type, RefType::Tag);
         assert_eq!(ar.version(), Some("2.0"));
     }
 
     #[test]
     fn parse_unknown_ref() {
-        let ar = ActionRef::parse("actions/checkout@main").unwrap();
+        let ar: ActionRef = "actions/checkout@main".parse().unwrap();
         assert_eq!(ar.ref_type, RefType::Unknown);
         assert_eq!(ar.version(), None);
     }
 
     #[test]
     fn missing_at_sign_is_error() {
-        assert!(ActionRef::parse("actions/checkout").is_err());
+        assert!("actions/checkout".parse::<ActionRef>().is_err());
     }
 
     #[test]
     fn missing_repo_is_error() {
-        assert!(ActionRef::parse("actions@v4").is_err());
+        assert!("actions@v4".parse::<ActionRef>().is_err());
     }
 
     #[test]
     fn package_name_simple() {
-        let ar = ActionRef::parse("actions/checkout@v4").unwrap();
+        let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
         assert_eq!(ar.package_name(), "actions/checkout");
     }
 
     #[test]
     fn version_returns_none_for_non_tag() {
-        let ar = ActionRef::parse("actions/checkout@main").unwrap();
+        let ar: ActionRef = "actions/checkout@main".parse().unwrap();
         assert_eq!(ar.version(), None);
+    }
+
+    #[test]
+    fn ref_type_display() {
+        assert_eq!(RefType::Sha.to_string(), "sha");
+        assert_eq!(RefType::Tag.to_string(), "tag");
+        assert_eq!(RefType::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn from_str_works() {
+        let ar = "actions/checkout@v4".parse::<ActionRef>().unwrap();
+        assert_eq!(ar.owner, "actions");
+        assert_eq!(ar.repo, "checkout");
+        assert_eq!(ar.git_ref, "v4");
+    }
+
+    #[test]
+    fn display_matches_raw() {
+        let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
+        assert_eq!(format!("{ar}"), "actions/checkout@v4");
+        assert_eq!(ar.to_string(), ar.raw);
     }
 }

@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::action_ref::ActionRef;
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Advisory {
     pub id: String,
     pub summary: String,

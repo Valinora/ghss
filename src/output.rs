@@ -90,7 +90,7 @@ mod tests {
     use crate::action_ref::ActionRef;
 
     fn sample_action() -> ActionRef {
-        ActionRef::parse("actions/checkout@v4").unwrap()
+        "actions/checkout@v4".parse::<ActionRef>().unwrap()
     }
 
     #[test]

@@ -4,23 +4,21 @@ use std::path::Path;
 use serde::Deserialize;
 use tracing::{instrument, warn};
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Workflow {
     #[serde(default)]
     pub jobs: HashMap<String, serde_yaml::Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Job {
     #[serde(default)]
     pub steps: Option<Vec<Step>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Step {
     pub uses: Option<String>,
-    #[serde(flatten)]
-    pub _extra: serde_yaml::Value,
 }
 
 #[instrument(skip(path), fields(path = %path.display()))]
@@ -30,8 +28,8 @@ pub fn parse_workflow(path: &Path) -> anyhow::Result<Vec<String>> {
 
     let mut uses_refs = Vec::new();
 
-    for (job_name, job_value) in &workflow.jobs {
-        match serde_yaml::from_value::<Job>(job_value.clone()) {
+    for (job_name, job_value) in workflow.jobs {
+        match serde_yaml::from_value::<Job>(job_value) {
             Ok(job) => {
                 if let Some(steps) = job.steps {
                     for step in steps {

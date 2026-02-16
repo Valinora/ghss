@@ -4,6 +4,8 @@ use tracing::instrument;
 
 use crate::action_ref::{ActionRef, RefType};
 
+pub const GITHUB_API_BASE: &str = "https://api.github.com";
+
 pub struct GitHubClient {
     agent: ureq::Agent,
     token: Option<String>,
@@ -25,23 +27,17 @@ impl GitHubClient {
 
         // Try as a tag first
         let tag_url = format!(
-            "https://api.github.com/repos/{}/{}/git/ref/tags/{}",
+            "{GITHUB_API_BASE}/repos/{}/{}/git/ref/tags/{}",
             action.owner, action.repo, action.git_ref
         );
 
-        match self.api_get(&tag_url) {
-            Ok(json) => return self.extract_commit_sha(&json, &action.owner, &action.repo),
-            Err(e) => {
-                // If not a 404, propagate the error
-                if !e.to_string().contains("404") {
-                    return Err(e);
-                }
-            }
+        if let Some(json) = self.api_get_optional(&tag_url)? {
+            return self.extract_commit_sha(&json, &action.owner, &action.repo);
         }
 
         // Fall back to branch
         let branch_url = format!(
-            "https://api.github.com/repos/{}/{}/git/ref/heads/{}",
+            "{GITHUB_API_BASE}/repos/{}/{}/git/ref/heads/{}",
             action.owner, action.repo, action.git_ref
         );
 
@@ -75,8 +71,7 @@ impl GitHubClient {
         // Annotated tag — dereference to get the commit
         if obj_type == "tag" {
             let tag_url = format!(
-                "https://api.github.com/repos/{}/{}/git/tags/{}",
-                owner, repo, sha
+                "{GITHUB_API_BASE}/repos/{owner}/{repo}/git/tags/{sha}"
             );
             let tag_json = self.api_get(&tag_url)?;
 
@@ -92,31 +87,27 @@ impl GitHubClient {
         bail!("unexpected ref object type: {obj_type}");
     }
 
-    pub fn api_get_public(&self, url: &str) -> Result<Value> {
-        self.api_get(url)
-    }
-
-    #[instrument(skip(self))]
-    fn api_get(&self, url: &str) -> Result<Value> {
+    fn api_get_optional(&self, url: &str) -> Result<Option<Value>> {
         let mut request = self
             .agent
             .get(url)
             .set("Accept", "application/vnd.github+json")
             .set("User-Agent", "ghss");
         if let Some(token) = &self.token {
-            request = request.set("Authorization", &format!("Bearer {}", token));
+            request = request.set("Authorization", &format!("Bearer {token}"));
         }
-        let response = request
-            .call()
-            .map_err(|e| match e {
-                ureq::Error::Status(status, _resp) => {
-                    anyhow::anyhow!("{} returned HTTP {}", url, status)
-                }
-                other => anyhow::anyhow!("request to {} failed: {}", url, other),
-            })?;
+        match request.call() {
+            Ok(response) => Ok(Some(response.into_json()?)),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(ureq::Error::Status(status, _)) => bail!("{url} returned HTTP {status}"),
+            Err(other) => bail!("request to {url} failed: {other}"),
+        }
+    }
 
-        let json: Value = response.into_json()?;
-        Ok(json)
+    #[instrument(skip(self))]
+    pub fn api_get(&self, url: &str) -> Result<Value> {
+        self.api_get_optional(url)?
+            .ok_or_else(|| anyhow::anyhow!("{url} returned HTTP 404"))
     }
 }
 
@@ -128,10 +119,10 @@ mod tests {
     #[test]
     fn sha_ref_returns_immediately() {
         let client = GitHubClient::new(Some("fake".into()));
-        let action = ActionRef::parse(
-            "actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11",
-        )
-        .unwrap();
+        let action: ActionRef =
+            "actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"
+                .parse()
+                .unwrap();
         let result = client.resolve_ref(&action).unwrap();
         assert_eq!(result, "b4ffde65f46336ab88eb53be808477a3936bae11");
     }

@@ -4,15 +4,28 @@ fn ghss() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ghss"))
 }
 
+fn run_ghss(args: &[&str]) -> std::process::Output {
+    ghss()
+        .args(args)
+        .output()
+        .expect("failed to execute")
+}
+
+fn stdout_of(args: &[&str]) -> String {
+    let output = run_ghss(args);
+    assert!(output.status.success(), "command failed: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[allow(dead_code)]
+fn stderr_of(args: &[&str]) -> String {
+    let output = run_ghss(args);
+    String::from_utf8(output.stderr).unwrap()
+}
+
 #[test]
 fn sample_workflow_lists_sorted_third_party_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines,
@@ -26,12 +39,7 @@ fn sample_workflow_lists_sorted_third_party_actions() {
 
 #[test]
 fn sample_workflow_excludes_docker_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
     assert!(
         !stdout.contains("docker://"),
         "docker actions should be filtered out"
@@ -40,12 +48,7 @@ fn sample_workflow_excludes_docker_actions() {
 
 #[test]
 fn sample_workflow_excludes_local_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
     assert!(
         !stdout.contains("./"),
         "local actions should be filtered out"
@@ -54,12 +57,7 @@ fn sample_workflow_excludes_local_actions() {
 
 #[test]
 fn sample_workflow_deduplicates_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
     let checkout_count = stdout
         .lines()
         .filter(|l| *l == "actions/checkout@v4")
@@ -69,13 +67,7 @@ fn sample_workflow_deduplicates_actions() {
 
 #[test]
 fn malformed_workflow_still_extracts_valid_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/malformed-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/malformed-workflow.yml"]);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines,
@@ -85,10 +77,7 @@ fn malformed_workflow_still_extracts_valid_actions() {
 
 #[test]
 fn malformed_workflow_warns_on_stderr() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/malformed-workflow.yml"])
-        .output()
-        .expect("failed to execute");
+    let output = run_ghss(&["--file", "tests/fixtures/malformed-workflow.yml"]);
 
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
@@ -103,10 +92,7 @@ fn malformed_workflow_warns_on_stderr() {
 
 #[test]
 fn missing_file_exits_with_error() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/nonexistent.yml"])
-        .output()
-        .expect("failed to execute");
+    let output = run_ghss(&["--file", "tests/fixtures/nonexistent.yml"]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -115,7 +101,7 @@ fn missing_file_exits_with_error() {
 
 #[test]
 fn no_file_arg_exits_with_error() {
-    let output = ghss().output().expect("failed to execute");
+    let output = run_ghss(&[]);
 
     assert!(!output.status.success());
 }
@@ -156,13 +142,7 @@ fn advisories_without_token_does_not_require_token() {
 
 #[test]
 fn sha_pinned_workflow_lists_actions() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sha-pinned-workflow.yml"])
-        .output()
-        .expect("failed to execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sha-pinned-workflow.yml"]);
     assert!(stdout.contains("actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"));
     assert!(stdout.contains("actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"));
     assert!(stdout.contains("codecov/codecov-action@v3"));
@@ -170,13 +150,7 @@ fn sha_pinned_workflow_lists_actions() {
 
 #[test]
 fn json_flag_outputs_valid_json_array() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml", "--json"])
-        .output()
-        .expect("failed to execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout should be valid JSON");
     let arr = parsed.as_array().expect("should be a JSON array");
     assert_eq!(arr.len(), 3);
@@ -199,13 +173,7 @@ fn json_flag_outputs_valid_json_array() {
 
 #[test]
 fn json_output_omits_optional_fields() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml", "--json"])
-        .output()
-        .expect("failed to execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let arr = parsed.as_array().unwrap();
 
@@ -223,10 +191,7 @@ fn json_output_omits_optional_fields() {
 
 #[test]
 fn json_flag_produces_json_tracing_on_stderr() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/malformed-workflow.yml", "--json"])
-        .output()
-        .expect("failed to execute");
+    let output = run_ghss(&["--file", "tests/fixtures/malformed-workflow.yml", "--json"]);
 
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
