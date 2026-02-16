@@ -66,6 +66,7 @@ fn parse_advisories(json: Value) -> Result<Vec<Advisory>> {
 
             Advisory {
                 id: item.ghsa_id.unwrap_or_else(|| "unknown".to_string()),
+                aliases: vec![],
                 summary: item.summary.unwrap_or_default(),
                 severity: item.severity.unwrap_or_else(|| "unknown".to_string()),
                 url: item.html_url.unwrap_or_default(),

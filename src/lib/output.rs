@@ -129,6 +129,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![Advisory {
                 id: "GHSA-1234".to_string(),
+                aliases: vec![],
                 summary: "Bad thing".to_string(),
                 severity: "high".to_string(),
                 url: "https://ghsa.example.com/1234".to_string(),
@@ -176,6 +177,7 @@ mod tests {
             resolved_sha: Some("deadbeef".to_string()),
             advisories: vec![Advisory {
                 id: "GHSA-1234".to_string(),
+                aliases: vec![],
                 summary: "Bad thing".to_string(),
                 severity: "high".to_string(),
                 url: "https://ghsa.example.com/1234".to_string(),

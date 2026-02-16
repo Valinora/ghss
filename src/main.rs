@@ -90,6 +90,7 @@ fn run(args: &Cli) -> anyhow::Result<()> {
             };
 
             let mut advisories = Vec::new();
+            let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
             for provider in &providers {
                 match provider.query(&action) {
                     Ok(advs) => advisories.extend(advs),
@@ -98,7 +99,17 @@ fn run(args: &Cli) -> anyhow::Result<()> {
                     }
                 }
             }
-            advisories.dedup_by(|a, b| a.id == b.id);
+            advisories.retain(|adv| {
+                if seen_ids.contains(&adv.id) {
+                    return false;
+                }
+                if adv.aliases.iter().any(|a| seen_ids.contains(a)) {
+                    return false;
+                }
+                seen_ids.insert(adv.id.clone());
+                seen_ids.extend(adv.aliases.iter().cloned());
+                true
+            });
 
             output::ActionEntry {
                 action,

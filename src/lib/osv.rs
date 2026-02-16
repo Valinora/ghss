@@ -17,6 +17,8 @@ struct OsvResponse {
 struct OsvVuln {
     id: String,
     #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
     summary: String,
     #[serde(default)]
     references: Vec<OsvReference>,
@@ -134,6 +136,7 @@ fn parse_osv_response(json: serde_json::Value) -> Result<Vec<Advisory>> {
 
             Advisory {
                 id: vuln.id,
+                aliases: vuln.aliases,
                 summary: vuln.summary,
                 severity,
                 url,
@@ -364,5 +367,38 @@ mod tests {
         assert_eq!(advisories.len(), 2);
         assert_eq!(advisories[0].id, "FIRST-001");
         assert_eq!(advisories[1].id, "SECOND-002");
+    }
+
+    #[test]
+    fn parse_vuln_with_aliases() {
+        let json = json!({
+            "vulns": [{
+                "id": "GHSA-mcph-m25j-8j63",
+                "aliases": ["CVE-2025-30066"],
+                "summary": "tj-actions/changed-files workflow compromise",
+                "references": [],
+                "affected": [],
+                "database_specific": {"severity": "CRITICAL"}
+            }]
+        });
+
+        let advisories = parse_osv_response(json).unwrap();
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0].aliases, vec!["CVE-2025-30066"]);
+    }
+
+    #[test]
+    fn parse_vuln_without_aliases_defaults_empty() {
+        let json = json!({
+            "vulns": [{
+                "id": "OSV-NOALIAS",
+                "summary": "No aliases",
+                "references": [],
+                "affected": []
+            }]
+        });
+
+        let advisories = parse_osv_response(json).unwrap();
+        assert!(advisories[0].aliases.is_empty());
     }
 }

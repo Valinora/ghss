@@ -7,6 +7,8 @@ use crate::action_ref::ActionRef;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Advisory {
     pub id: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     pub summary: String,
     pub severity: String,
     pub url: String,
