@@ -11,8 +11,33 @@ pub mod output;
 #[path = "lib/workflow.rs"]
 pub mod workflow;
 
-pub fn is_third_party(uses: &str) -> bool {
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use tracing::warn;
+
+use action_ref::ActionRef;
+
+fn is_third_party(uses: &str) -> bool {
     !uses.starts_with("./") && !uses.starts_with("docker://")
+}
+
+pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
+    let uses_refs = workflow::parse_workflow(path)?;
+
+    let unique: BTreeSet<ActionRef> = uses_refs
+        .into_iter()
+        .filter(|u| is_third_party(u))
+        .filter_map(|raw| match raw.parse::<ActionRef>() {
+            Ok(ar) => Some(ar),
+            Err(e) => {
+                warn!(action = %raw, error = %e, "failed to parse action reference");
+                None
+            }
+        })
+        .collect();
+
+    Ok(unique.into_iter().collect())
 }
 
 #[cfg(test)]

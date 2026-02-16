@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use anyhow::bail;
@@ -7,8 +6,7 @@ use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use ghss::action_ref::ActionRef;
-use ghss::advisory::{Advisory, AdvisoryProvider};
+use ghss::advisory::AdvisoryProvider;
 use ghss::ghsa::GhsaProvider;
 use ghss::github::GitHubClient;
 use ghss::output;
@@ -20,10 +18,6 @@ struct Cli {
     /// Path to a GitHub Actions workflow YAML file
     #[arg(short, long)]
     file: PathBuf,
-
-    /// Resolve action refs to their commit SHAs via the GitHub API
-    #[arg(long)]
-    resolve: bool,
 
     /// Look up known security advisories for each action
     #[arg(long)]
@@ -39,12 +33,6 @@ struct Cli {
 
     #[command(flatten)]
     verbosity: Verbosity<WarnLevel>,
-}
-
-struct ActionResult {
-    action: ActionRef,
-    resolved_sha: Option<String>,
-    advisories: Option<Vec<Advisory>>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -67,51 +55,33 @@ fn main() -> anyhow::Result<()> {
         base.init();
     }
 
+    run(&args)
+}
+
+fn run(args: &Cli) -> anyhow::Result<()> {
     if !args.file.exists() {
         bail!("file not found: {}", args.file.display());
     }
 
-    let uses_refs = ghss::workflow::parse_workflow(&args.file)?;
+    let actions = ghss::parse_actions(&args.file)?;
 
-    let unique: BTreeSet<_> = uses_refs
-        .into_iter()
-        .filter(|u| ghss::is_third_party(u))
-        .collect();
-
-    // Build GitHub client if needed for --resolve or --advisories
-    let github_client = if args.resolve || args.advisories {
-        Some(GitHubClient::new(args.github_token.clone()))
-    } else {
-        None
-    };
+    let github_client = GitHubClient::new(args.github_token.clone());
 
     let advisory_provider: Option<GhsaProvider> = if args.advisories {
-        Some(GhsaProvider::new_borrowed(github_client.as_ref().unwrap()))
+        Some(GhsaProvider::new_borrowed(&github_client))
     } else {
         None
     };
 
-    let results: Vec<ActionResult> = unique
-        .iter()
-        .filter_map(|raw| match raw.parse::<ActionRef>() {
-            Ok(ar) => Some(ar),
-            Err(e) => {
-                warn!(action = %raw, error = %e, "failed to parse action reference");
-                None
-            }
-        })
+    let entries: Vec<output::ActionEntry> = actions
+        .into_iter()
         .map(|action| {
-            let resolved_sha = if args.resolve {
-                let client = github_client.as_ref().unwrap();
-                match client.resolve_ref(&action) {
-                    Ok(sha) => Some(sha),
-                    Err(e) => {
-                        warn!(action = %action.raw, error = %e, "failed to resolve ref");
-                        None
-                    }
+            let resolved_sha = match github_client.resolve_ref(&action) {
+                Ok(sha) => Some(sha),
+                Err(e) => {
+                    warn!(action = %action.raw, error = %e, "failed to resolve ref");
+                    None
                 }
-            } else {
-                None
             };
 
             let advisories = if let Some(provider) = &advisory_provider {
@@ -126,21 +96,11 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
-            ActionResult {
+            output::ActionEntry {
                 action,
                 resolved_sha,
                 advisories,
             }
-        })
-        .collect();
-
-    // Output
-    let entries: Vec<output::ActionEntry> = results
-        .iter()
-        .map(|r| output::ActionEntry {
-            action: &r.action,
-            resolved_sha: r.resolved_sha.as_deref(),
-            advisories: r.advisories.as_deref(),
         })
         .collect();
 

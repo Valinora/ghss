@@ -1,10 +1,12 @@
+use std::cmp::Ordering;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use serde::Serialize;
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RefType {
     Sha,
@@ -69,6 +71,42 @@ impl FromStr for ActionRef {
 impl fmt::Display for ActionRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.raw)
+    }
+}
+
+impl PartialEq for ActionRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.owner == other.owner
+            && self.repo == other.repo
+            && self.path == other.path
+            && self.git_ref == other.git_ref
+    }
+}
+
+impl Eq for ActionRef {}
+
+impl PartialOrd for ActionRef {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ActionRef {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.owner
+            .cmp(&other.owner)
+            .then_with(|| self.repo.cmp(&other.repo))
+            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| self.git_ref.cmp(&other.git_ref))
+    }
+}
+
+impl Hash for ActionRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.owner.hash(state);
+        self.repo.hash(state);
+        self.path.hash(state);
+        self.git_ref.hash(state);
     }
 }
 
@@ -198,5 +236,33 @@ mod tests {
         let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
         assert_eq!(format!("{ar}"), "actions/checkout@v4");
         assert_eq!(ar.to_string(), ar.raw);
+    }
+
+    #[test]
+    fn equal_actions_are_equal() {
+        let a: ActionRef = "actions/checkout@v4".parse().unwrap();
+        let b: ActionRef = "actions/checkout@v4".parse().unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_actions_are_not_equal() {
+        let a: ActionRef = "actions/checkout@v4".parse().unwrap();
+        let b: ActionRef = "actions/checkout@v3".parse().unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn ordering_by_owner_then_repo() {
+        let a: ActionRef = "actions/checkout@v4".parse().unwrap();
+        let b: ActionRef = "codecov/codecov-action@v3".parse().unwrap();
+        assert!(a < b);
+    }
+
+    #[test]
+    fn ordering_by_ref_within_same_repo() {
+        let a: ActionRef = "actions/checkout@v3".parse().unwrap();
+        let b: ActionRef = "actions/checkout@v4".parse().unwrap();
+        assert!(a < b);
     }
 }

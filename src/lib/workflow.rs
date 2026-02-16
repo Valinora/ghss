@@ -5,20 +5,20 @@ use serde::Deserialize;
 use tracing::{instrument, warn};
 
 #[derive(Debug, Deserialize)]
-pub struct Workflow {
+struct Workflow {
     #[serde(default)]
-    pub jobs: HashMap<String, serde_yaml::Value>,
+    jobs: HashMap<String, serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Job {
+struct Job {
     #[serde(default)]
-    pub steps: Option<Vec<Step>>,
+    steps: Option<Vec<Step>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Step {
-    pub uses: Option<String>,
+struct Step {
+    uses: Option<String>,
 }
 
 #[instrument(skip(path), fields(path = %path.display()))]

@@ -26,9 +26,12 @@ fn stderr_of(args: &[&str]) -> String {
 #[test]
 fn sample_workflow_lists_sorted_third_party_actions() {
     let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
-    let lines: Vec<&str> = stdout.lines().collect();
+    let action_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.starts_with("  "))
+        .collect();
     assert_eq!(
-        lines,
+        action_lines,
         vec![
             "actions/checkout@v4",
             "actions/setup-node@v4",
@@ -68,9 +71,12 @@ fn sample_workflow_deduplicates_actions() {
 #[test]
 fn malformed_workflow_still_extracts_valid_actions() {
     let stdout = stdout_of(&["--file", "tests/fixtures/malformed-workflow.yml"]);
-    let lines: Vec<&str> = stdout.lines().collect();
+    let action_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.starts_with("  "))
+        .collect();
     assert_eq!(
-        lines,
+        action_lines,
         vec!["actions/checkout@v4", "actions/setup-node@v4",]
     );
 }
@@ -104,21 +110,6 @@ fn no_file_arg_exits_with_error() {
     let output = run_ghss(&[]);
 
     assert!(!output.status.success());
-}
-
-#[test]
-fn resolve_without_token_does_not_require_token() {
-    let output = ghss()
-        .args(["--file", "tests/fixtures/sample-workflow.yml", "--resolve"])
-        .env_remove("GITHUB_TOKEN")
-        .output()
-        .expect("failed to execute");
-
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        !stderr.contains("--github-token or GITHUB_TOKEN"),
-        "should not hard-fail on missing token"
-    );
 }
 
 #[test]
@@ -172,16 +163,12 @@ fn json_flag_outputs_valid_json_array() {
 }
 
 #[test]
-fn json_output_omits_optional_fields() {
+fn json_output_omits_advisories_when_not_requested() {
     let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let arr = parsed.as_array().unwrap();
 
     for entry in arr {
-        assert!(
-            entry.get("resolved_sha").is_none(),
-            "resolved_sha should be absent when --resolve not used"
-        );
         assert!(
             entry.get("advisories").is_none(),
             "advisories should be absent when --advisories not used"

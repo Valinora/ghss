@@ -4,13 +4,13 @@ use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
 
 #[derive(Serialize)]
-pub struct ActionEntry<'a> {
+pub struct ActionEntry {
     #[serde(flatten)]
-    pub action: &'a ActionRef,
+    pub action: ActionRef,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolved_sha: Option<&'a str>,
+    pub resolved_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub advisories: Option<&'a [Advisory]>,
+    pub advisories: Option<Vec<Advisory>>,
 }
 
 pub trait OutputFormatter {
@@ -34,25 +34,17 @@ impl OutputFormatter for TextOutput {
         for entry in entries {
             writeln!(writer, "{}", entry.action.raw)?;
 
-            if let Some(sha) = entry.resolved_sha {
+            if let Some(sha) = &entry.resolved_sha {
                 writeln!(writer, "  sha: {sha}")?;
             }
 
             if self.show_advisories {
-                if let Some(advs) = entry.advisories {
+                if let Some(advs) = &entry.advisories {
                     if advs.is_empty() {
                         writeln!(writer, "  advisories: none")?;
                     } else {
                         for adv in advs {
-                            writeln!(
-                                writer,
-                                "  {} ({}): {}",
-                                adv.id, adv.severity, adv.summary
-                            )?;
-                            writeln!(writer, "    {}", adv.url)?;
-                            if let Some(range) = &adv.affected_range {
-                                writeln!(writer, "    affected: {range}")?;
-                            }
+                            writeln!(writer, "  {adv}")?;
                         }
                     }
                 }
@@ -95,9 +87,8 @@ mod tests {
 
     #[test]
     fn text_output_basic() {
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
             advisories: None,
         }];
@@ -111,10 +102,9 @@ mod tests {
 
     #[test]
     fn text_output_with_sha() {
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
-            resolved_sha: Some("abc123"),
+            action: sample_action(),
+            resolved_sha: Some("abc123".to_string()),
             advisories: None,
         }];
         let mut buf = Vec::new();
@@ -129,11 +119,10 @@ mod tests {
 
     #[test]
     fn text_output_with_no_advisories() {
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
-            advisories: Some(&[]),
+            advisories: Some(vec![]),
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput {
@@ -146,19 +135,17 @@ mod tests {
 
     #[test]
     fn text_output_with_advisories() {
-        let action = sample_action();
-        let advs = vec![Advisory {
-            id: "GHSA-1234".to_string(),
-            summary: "Bad thing".to_string(),
-            severity: "high".to_string(),
-            url: "https://ghsa.example.com/1234".to_string(),
-            affected_range: Some(">= 1.0, < 2.0".to_string()),
-            source: "ghsa".to_string(),
-        }];
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
-            advisories: Some(&advs),
+            advisories: Some(vec![Advisory {
+                id: "GHSA-1234".to_string(),
+                summary: "Bad thing".to_string(),
+                severity: "high".to_string(),
+                url: "https://ghsa.example.com/1234".to_string(),
+                affected_range: Some(">= 1.0, < 2.0".to_string()),
+                source: "ghsa".to_string(),
+            }]),
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput {
@@ -173,9 +160,8 @@ mod tests {
 
     #[test]
     fn json_output_basic() {
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
             advisories: None,
         }];
@@ -197,19 +183,17 @@ mod tests {
 
     #[test]
     fn json_output_with_all_fields() {
-        let action = sample_action();
-        let advs = vec![Advisory {
-            id: "GHSA-1234".to_string(),
-            summary: "Bad thing".to_string(),
-            severity: "high".to_string(),
-            url: "https://ghsa.example.com/1234".to_string(),
-            affected_range: Some(">= 1.0".to_string()),
-            source: "ghsa".to_string(),
-        }];
         let entries = vec![ActionEntry {
-            action: &action,
-            resolved_sha: Some("deadbeef"),
-            advisories: Some(&advs),
+            action: sample_action(),
+            resolved_sha: Some("deadbeef".to_string()),
+            advisories: Some(vec![Advisory {
+                id: "GHSA-1234".to_string(),
+                summary: "Bad thing".to_string(),
+                severity: "high".to_string(),
+                url: "https://ghsa.example.com/1234".to_string(),
+                affected_range: Some(">= 1.0".to_string()),
+                source: "ghsa".to_string(),
+            }]),
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -224,9 +208,8 @@ mod tests {
     #[test]
     fn factory_returns_json() {
         let f = formatter(true, false);
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
             advisories: None,
         }];
@@ -240,9 +223,8 @@ mod tests {
     #[test]
     fn factory_returns_text() {
         let f = formatter(false, false);
-        let action = sample_action();
         let entries = vec![ActionEntry {
-            action: &action,
+            action: sample_action(),
             resolved_sha: None,
             advisories: None,
         }];

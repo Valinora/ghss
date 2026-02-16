@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::Serialize;
 
 use crate::action_ref::ActionRef;
@@ -10,6 +12,17 @@ pub struct Advisory {
     pub url: String,
     pub affected_range: Option<String>,
     pub source: String,
+}
+
+impl fmt::Display for Advisory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{} ({}): {}", self.id, self.severity, self.summary)?;
+        write!(f, "    {}", self.url)?;
+        if let Some(range) = &self.affected_range {
+            write!(f, "\n    affected: {range}")?;
+        }
+        Ok(())
+    }
 }
 
 pub trait AdvisoryProvider {
