@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::instrument;
 
@@ -60,20 +61,21 @@ struct OsvDatabaseSpecific {
 }
 
 pub struct OsvProvider {
-    agent: ureq::Agent,
+    client: reqwest::Client,
 }
 
 impl OsvProvider {
     pub fn new() -> Self {
         Self {
-            agent: ureq::Agent::new(),
+            client: reqwest::Client::new(),
         }
     }
 }
 
+#[async_trait]
 impl AdvisoryProvider for OsvProvider {
     #[instrument(skip(self), fields(action = %action.raw))]
-    fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
+    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
         let body = serde_json::json!({
             "package": {
@@ -83,14 +85,21 @@ impl AdvisoryProvider for OsvProvider {
         });
 
         let response = self
-            .agent
+            .client
             .post(OSV_API_URL)
-            .set("Content-Type", "application/json")
-            .send_string(&body.to_string())
+            .json(&body)
+            .send()
+            .await
             .with_context(|| format!("failed to query OSV for {package_name}"))?;
 
+        let status = response.status();
+        if !status.is_success() {
+            bail!("OSV API returned HTTP {status} for {package_name}");
+        }
+
         let json: serde_json::Value = response
-            .into_json()
+            .json()
+            .await
             .context("failed to parse OSV response")?;
 
         parse_osv_response(json)

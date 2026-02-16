@@ -24,7 +24,7 @@ impl fmt::Display for RefType {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ActionRef {
     pub raw: String,
     pub owner: String,

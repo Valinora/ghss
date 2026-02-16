@@ -1,8 +1,12 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::bail;
 use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
+use futures::future::join_all;
+use tokio::sync::Semaphore;
 use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -36,7 +40,8 @@ struct Cli {
     verbosity: Verbosity<WarnLevel>,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -56,10 +61,10 @@ fn main() -> anyhow::Result<()> {
         base.init();
     }
 
-    run(&args)
+    run(&args).await
 }
 
-fn run(args: &Cli) -> anyhow::Result<()> {
+async fn run(args: &Cli) -> anyhow::Result<()> {
     if !args.file.exists() {
         bail!("file not found: {}", args.file.display());
     }
@@ -68,56 +73,75 @@ fn run(args: &Cli) -> anyhow::Result<()> {
 
     let github_client = GitHubClient::new(args.github_token.clone());
 
-    let providers: Vec<Box<dyn AdvisoryProvider + '_>> = match args.provider.as_str() {
-        "ghsa" => vec![Box::new(GhsaProvider::new_borrowed(&github_client))],
-        "osv" => vec![Box::new(OsvProvider::new())],
+    let providers: Vec<Arc<dyn AdvisoryProvider>> = match args.provider.as_str() {
+        "ghsa" => vec![Arc::new(GhsaProvider::new(github_client.clone()))],
+        "osv" => vec![Arc::new(OsvProvider::new())],
         "all" => vec![
-            Box::new(GhsaProvider::new_borrowed(&github_client)),
-            Box::new(OsvProvider::new()),
+            Arc::new(GhsaProvider::new(github_client.clone())),
+            Arc::new(OsvProvider::new()),
         ],
         other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
     };
 
-    let entries: Vec<output::ActionEntry> = actions
+    let sem = Arc::new(Semaphore::new(10));
+
+    let futures: Vec<_> = actions
         .into_iter()
         .map(|action| {
-            let resolved_sha = match github_client.resolve_ref(&action) {
-                Ok(sha) => Some(sha),
-                Err(e) => {
-                    warn!(action = %action.raw, error = %e, "failed to resolve ref");
-                    None
-                }
-            };
+            let client = github_client.clone();
+            let providers = providers.clone();
+            let sem = sem.clone();
 
-            let mut advisories = Vec::new();
-            let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for provider in &providers {
-                match provider.query(&action) {
-                    Ok(advs) => advisories.extend(advs),
+            async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+
+                let resolved_sha = match client.resolve_ref(&action).await {
+                    Ok(sha) => Some(sha),
                     Err(e) => {
-                        warn!(action = %action.raw, provider = provider.name(), error = %e, "failed to query advisories");
+                        warn!(action = %action.raw, error = %e, "failed to resolve ref");
+                        None
+                    }
+                };
+
+                let advisory_results = join_all(providers.iter().map(|p| {
+                    let p = p.clone();
+                    let action = action.clone();
+                    async move { (p.name().to_string(), p.query(&action).await) }
+                }))
+                .await;
+
+                let mut advisories = Vec::new();
+                let mut seen_ids: HashSet<String> = HashSet::new();
+                for (provider_name, result) in advisory_results {
+                    match result {
+                        Ok(advs) => advisories.extend(advs),
+                        Err(e) => {
+                            warn!(action = %action.raw, provider = %provider_name, error = %e, "failed to query advisories");
+                        }
                     }
                 }
-            }
-            advisories.retain(|adv| {
-                if seen_ids.contains(&adv.id) {
-                    return false;
-                }
-                if adv.aliases.iter().any(|a| seen_ids.contains(a)) {
-                    return false;
-                }
-                seen_ids.insert(adv.id.clone());
-                seen_ids.extend(adv.aliases.iter().cloned());
-                true
-            });
+                advisories.retain(|adv| {
+                    if seen_ids.contains(&adv.id) {
+                        return false;
+                    }
+                    if adv.aliases.iter().any(|a| seen_ids.contains(a)) {
+                        return false;
+                    }
+                    seen_ids.insert(adv.id.clone());
+                    seen_ids.extend(adv.aliases.iter().cloned());
+                    true
+                });
 
-            output::ActionEntry {
-                action,
-                resolved_sha,
-                advisories,
+                output::ActionEntry {
+                    action,
+                    resolved_sha,
+                    advisories,
+                }
             }
         })
         .collect();
+
+    let entries: Vec<output::ActionEntry> = join_all(futures).await;
 
     let formatter = output::formatter(args.json);
     formatter

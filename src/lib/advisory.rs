@@ -1,5 +1,6 @@
 use std::fmt;
 
+use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::action_ref::ActionRef;
@@ -27,7 +28,8 @@ impl fmt::Display for Advisory {
     }
 }
 
-pub trait AdvisoryProvider {
-    fn query(&self, action: &ActionRef) -> anyhow::Result<Vec<Advisory>>;
+#[async_trait]
+pub trait AdvisoryProvider: Send + Sync {
+    async fn query(&self, action: &ActionRef) -> anyhow::Result<Vec<Advisory>>;
     fn name(&self) -> &str;
 }

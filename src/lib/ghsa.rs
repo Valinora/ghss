@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::instrument;
@@ -22,25 +23,27 @@ struct GhsaVulnerability {
     vulnerable_version_range: Option<String>,
 }
 
-pub struct GhsaProvider<'a> {
-    client: &'a GitHubClient,
+pub struct GhsaProvider {
+    client: GitHubClient,
 }
 
-impl<'a> GhsaProvider<'a> {
-    pub fn new_borrowed(client: &'a GitHubClient) -> Self {
+impl GhsaProvider {
+    pub fn new(client: GitHubClient) -> Self {
         Self { client }
     }
 }
 
-impl AdvisoryProvider for GhsaProvider<'_> {
+#[async_trait]
+impl AdvisoryProvider for GhsaProvider {
     #[instrument(skip(self), fields(action = %action.raw))]
-    fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
+    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
         let json = self
             .client
             .api_get(&format!(
                 "{GITHUB_API_BASE}/advisories?ecosystem=actions&affects={package_name}"
             ))
+            .await
             .with_context(|| format!("failed to query advisories for {package_name}"))?;
 
         parse_advisories(json)
