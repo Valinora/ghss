@@ -1,8 +1,14 @@
+#[path = "lib/action_ref.rs"]
 pub mod action_ref;
+#[path = "lib/advisory.rs"]
 pub mod advisory;
+#[path = "lib/ghsa.rs"]
 pub mod ghsa;
+#[path = "lib/github.rs"]
 pub mod github;
+#[path = "lib/output.rs"]
 pub mod output;
+#[path = "lib/workflow.rs"]
 pub mod workflow;
 
 pub fn is_third_party(uses: &str) -> bool {

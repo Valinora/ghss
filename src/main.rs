@@ -1,18 +1,45 @@
-mod cli;
-
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use anyhow::bail;
 use clap::Parser;
+use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use cli::Cli;
 use ghss::action_ref::ActionRef;
 use ghss::advisory::{Advisory, AdvisoryProvider};
 use ghss::ghsa::GhsaProvider;
 use ghss::github::GitHubClient;
 use ghss::output;
+
+/// Audit GitHub Actions workflows for third-party action usage
+#[derive(Parser)]
+#[command(name = "ghss", version)]
+struct Cli {
+    /// Path to a GitHub Actions workflow YAML file
+    #[arg(short, long)]
+    file: PathBuf,
+
+    /// Resolve action refs to their commit SHAs via the GitHub API
+    #[arg(long)]
+    resolve: bool,
+
+    /// Look up known security advisories for each action
+    #[arg(long)]
+    advisories: bool,
+
+    /// Output results and logs in JSON format
+    #[arg(long)]
+    json: bool,
+
+    /// GitHub personal access token (or set GITHUB_TOKEN env var)
+    #[arg(long, env = "GITHUB_TOKEN")]
+    github_token: Option<String>,
+
+    #[command(flatten)]
+    verbosity: Verbosity<WarnLevel>,
+}
 
 struct ActionResult {
     action: ActionRef,
