@@ -176,6 +176,40 @@ fn json_output_omits_advisories_when_not_requested() {
     }
 }
 
+/// Requires network access and a GitHub token to avoid rate limits.
+/// Run with: cargo test -- --ignored
+#[test]
+#[ignore]
+fn vulnerable_workflow_reports_known_advisories() {
+    let stdout = stdout_of(&[
+        "--file",
+        "tests/fixtures/vulnerable-workflow.yml",
+        "--advisories",
+    ]);
+
+    // tj-actions/changed-files@v35 has known advisories
+    assert!(
+        stdout.contains("GHSA-mrrh-fwg8-r2c3"),
+        "should report tj-actions/changed-files secret disclosure advisory"
+    );
+    assert!(
+        stdout.contains("GHSA-mcph-m25j-8j63"),
+        "should report tj-actions/changed-files command injection advisory"
+    );
+
+    // super-linter/super-linter@v6 has a known advisory
+    assert!(
+        stdout.contains("GHSA-r79c-pqj3-577x"),
+        "should report super-linter command injection advisory"
+    );
+
+    // actions/checkout@v4 should have no advisories
+    assert!(
+        stdout.contains("actions/checkout@v4\n  sha:") && stdout.contains("advisories: none"),
+        "actions/checkout@v4 should have no advisories"
+    );
+}
+
 #[test]
 fn json_flag_produces_json_tracing_on_stderr() {
     let output = run_ghss(&["--file", "tests/fixtures/malformed-workflow.yml", "--json"]);

@@ -1,0 +1,13 @@
+name: Vulnerable CI
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get changed files
+        uses: tj-actions/changed-files@v35
+      - name: Lint
+        uses: super-linter/super-linter@v6

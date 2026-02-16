@@ -92,17 +92,18 @@ mod tests {
 
     #[test]
     fn parse_advisory_with_all_fields() {
+        // Based on real GHSA-r79c-pqj3-577x (super-linter command injection)
         let json = json!([{
-            "ghsa_id": "GHSA-7943-82jg-wmw5",
-            "summary": "Tokenless upload may expose secrets",
-            "severity": "critical",
-            "html_url": "https://github.com/advisories/GHSA-7943-82jg-wmw5",
+            "ghsa_id": "GHSA-r79c-pqj3-577x",
+            "summary": "Super-linter is vulnerable to command injection via crafted filenames",
+            "severity": "high",
+            "html_url": "https://github.com/advisories/GHSA-r79c-pqj3-577x",
             "vulnerabilities": [{
                 "package": {
                     "ecosystem": "actions",
-                    "name": "codecov/codecov-action"
+                    "name": "super-linter/super-linter"
                 },
-                "vulnerable_version_range": "< 4.0.0"
+                "vulnerable_version_range": ">= 6.0.0, < 8.3.1"
             }]
         }]);
 
@@ -110,11 +111,11 @@ mod tests {
         assert_eq!(advisories.len(), 1);
 
         let a = &advisories[0];
-        assert_eq!(a.id, "GHSA-7943-82jg-wmw5");
-        assert_eq!(a.summary, "Tokenless upload may expose secrets");
-        assert_eq!(a.severity, "critical");
-        assert_eq!(a.url, "https://github.com/advisories/GHSA-7943-82jg-wmw5");
-        assert_eq!(a.affected_range, Some("< 4.0.0".to_string()));
+        assert_eq!(a.id, "GHSA-r79c-pqj3-577x");
+        assert_eq!(a.summary, "Super-linter is vulnerable to command injection via crafted filenames");
+        assert_eq!(a.severity, "high");
+        assert_eq!(a.url, "https://github.com/advisories/GHSA-r79c-pqj3-577x");
+        assert_eq!(a.affected_range, Some(">= 6.0.0, < 8.3.1".to_string()));
         assert_eq!(a.source, "GHSA");
     }
 
