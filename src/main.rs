@@ -24,6 +24,10 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Scan action repositories for languages and ecosystems
+    #[arg(long)]
+    scan: bool,
+
     /// GitHub personal access token (or set GITHUB_TOKEN env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
@@ -62,11 +66,13 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     }
 
     let actions = ghss::parse_actions(&args.file)?;
-    let github_client = GitHubClient::new(args.github_token.clone());
-    let providers = ghss::create_providers(&args.provider, &github_client)?;
-    let entries =
-        ghss::audit_actions(actions, &providers, &github_client, &ghss::AuditOptions::default())
-            .await;
+    let client = GitHubClient::new(args.github_token.clone());
+    let options = ghss::AuditOptions {
+        scan: args.scan,
+        ..ghss::AuditOptions::default()
+    };
+    let auditor = ghss::Auditor::new(&args.provider, client, options)?;
+    let entries = auditor.audit(actions).await;
 
     let formatter = output::formatter(args.json);
     formatter
