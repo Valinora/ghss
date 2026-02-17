@@ -66,7 +66,7 @@ struct OsvDatabaseSpecific {
 // Shared client — owns HTTP logic and response parsing
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OsvClient {
     http: reqwest::Client,
 }

@@ -38,7 +38,7 @@ impl fmt::Display for Ecosystem {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ActionScan {
+pub struct ScanResult {
     pub primary_language: Option<String>,
     pub ecosystems: Vec<Ecosystem>,
 }
@@ -99,10 +99,8 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
     let mut seen = Vec::new();
 
     for (alias, ecosystem) in MANIFEST_ALIASES {
-        if repo.get(*alias).is_some_and(|v| !v.is_null()) {
-            if !seen.contains(ecosystem) {
-                seen.push(ecosystem.clone());
-            }
+        if repo.get(*alias).is_some_and(|v| !v.is_null()) && !seen.contains(ecosystem) {
+            seen.push(ecosystem.clone());
         }
     }
 
@@ -113,7 +111,7 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
 pub async fn scan_action(
     action: &ActionRef,
     client: &GitHubClient,
-) -> Result<ActionScan> {
+) -> Result<ScanResult> {
     let query = build_query(&action.owner, &action.repo);
     let data = client.graphql_post(&query).await?;
 
@@ -121,7 +119,7 @@ pub async fn scan_action(
         .get("repository")
         .ok_or_else(|| anyhow::anyhow!("repository not found: {}/{}", action.owner, action.repo))?;
 
-    Ok(ActionScan {
+    Ok(ScanResult {
         primary_language: extract_primary_language(repo),
         ecosystems: extract_ecosystems(repo),
     })

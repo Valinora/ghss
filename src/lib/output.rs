@@ -4,7 +4,7 @@ use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
 use crate::context::AuditContext;
 use crate::deps::DependencyReport;
-use crate::scan::ActionScan;
+use crate::scan::ScanResult;
 
 #[derive(Serialize)]
 pub struct ActionEntry {
@@ -14,7 +14,7 @@ pub struct ActionEntry {
     pub resolved_sha: Option<String>,
     pub advisories: Vec<Advisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scan: Option<ActionScan>,
+    pub scan: Option<ScanResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dep_vulnerabilities: Vec<DependencyReport>,
 }
@@ -300,12 +300,12 @@ mod tests {
 
     #[test]
     fn json_output_includes_scan_when_present() {
-        use crate::scan::{ActionScan, Ecosystem};
+        use crate::scan::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
-            scan: Some(ActionScan {
+            scan: Some(ScanResult {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn audit_context_converts_to_action_entry() {
         use crate::context::AuditContext;
-        use crate::scan::{ActionScan, Ecosystem};
+        use crate::scan::{ScanResult, Ecosystem};
 
         let ctx = AuditContext {
             action: sample_action(),
@@ -345,7 +345,7 @@ mod tests {
                 affected_range: None,
                 source: "ghsa".to_string(),
             }],
-            scan: Some(ActionScan {
+            scan: Some(ScanResult {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm],
             }),
@@ -364,12 +364,12 @@ mod tests {
 
     #[test]
     fn text_output_with_scan_data() {
-        use crate::scan::{ActionScan, Ecosystem};
+        use crate::scan::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: Some("abc123".to_string()),
             advisories: vec![],
-            scan: Some(ActionScan {
+            scan: Some(ScanResult {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),
