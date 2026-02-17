@@ -20,6 +20,8 @@ Rust edition is 2024 — requires a recent nightly or stable Rust toolchain.
 
 ## Architecture
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the target architecture. The codebase is being iteratively migrated toward that design. The description below reflects the **current** state.
+
 The crate is organized as `src/lib.rs` (top-level types and orchestration) with submodules in `src/lib/` via `src/lib/mod.rs`:
 
 - **`lib.rs`** — Top-level public API. Exports `AuditOptions` (fields: `scan`, `resolve_refs`, `max_concurrency`), `Auditor` struct (constructor accepts provider name, `GitHubClient`, and `AuditOptions`; `audit()` method runs the full pipeline), and `parse_actions()` free function. Module re-exports from `src/lib/mod.rs`.
