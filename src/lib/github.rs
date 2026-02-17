@@ -23,6 +23,10 @@ impl GitHubClient {
         }
     }
 
+    pub fn has_token(&self) -> bool {
+        self.token.is_some()
+    }
+
     #[instrument(skip(self), fields(action = %action.raw))]
     pub async fn resolve_ref(&self, action: &ActionRef) -> Result<String> {
         if action.ref_type == RefType::Sha {
@@ -171,6 +175,18 @@ impl GitHubClient {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn has_token_returns_true_when_set() {
+        let client = GitHubClient::new(Some("tok".into()));
+        assert!(client.has_token());
+    }
+
+    #[test]
+    fn has_token_returns_false_when_none() {
+        let client = GitHubClient::new(None);
+        assert!(!client.has_token());
+    }
 
     #[tokio::test]
     async fn sha_ref_returns_immediately() {

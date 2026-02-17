@@ -31,6 +31,16 @@ use advisory::{deduplicate_advisories, AdvisoryProvider};
 use ghsa::GhsaProvider;
 use github::GitHubClient;
 use osv::OsvProvider;
+#[derive(Debug, Clone)]
+pub struct AuditOptions {
+    pub scan: bool,
+}
+
+impl Default for AuditOptions {
+    fn default() -> Self {
+        Self { scan: false }
+    }
+}
 
 fn is_third_party(uses: &str) -> bool {
     !uses.starts_with("./") && !uses.starts_with("docker://")
@@ -72,13 +82,25 @@ pub fn create_providers(
     }
 }
 
-/// Run the full audit pipeline: resolve refs, query advisories, deduplicate.
+/// Run the full audit pipeline: resolve refs, query advisories, optionally scan.
 pub async fn audit_actions(
     actions: Vec<ActionRef>,
     providers: &[Arc<dyn AdvisoryProvider>],
     github_client: &GitHubClient,
+    options: &AuditOptions,
 ) -> Vec<output::ActionEntry> {
     let sem = Arc::new(Semaphore::new(10));
+
+    let do_scan = if options.scan {
+        if github_client.has_token() {
+            true
+        } else {
+            warn!("scan enabled but no GitHub token provided; skipping scan");
+            false
+        }
+    } else {
+        false
+    };
 
     let futures: Vec<_> = actions
         .into_iter()
@@ -90,36 +112,58 @@ pub async fn audit_actions(
             async move {
                 let _permit = sem.acquire().await.expect("semaphore closed");
 
-                let resolved_sha = match client.resolve_ref(&action).await {
-                    Ok(sha) => Some(sha),
-                    Err(e) => {
-                        warn!(action = %action.raw, error = %e, "failed to resolve ref");
+                let resolve_fut = async {
+                    match client.resolve_ref(&action).await {
+                        Ok(sha) => Some(sha),
+                        Err(e) => {
+                            warn!(action = %action.raw, error = %e, "failed to resolve ref");
+                            None
+                        }
+                    }
+                };
+
+                let advisory_fut = async {
+                    let results = join_all(providers.iter().map(|p| {
+                        let p = p.clone();
+                        let action = action.clone();
+                        async move { (p.name().to_string(), p.query(&action).await) }
+                    }))
+                    .await;
+
+                    let mut advisories = Vec::new();
+                    for (provider_name, result) in results {
+                        match result {
+                            Ok(advs) => advisories.extend(advs),
+                            Err(e) => {
+                                warn!(action = %action.raw, provider = %provider_name, error = %e, "failed to query advisories");
+                            }
+                        }
+                    }
+                    deduplicate_advisories(advisories)
+                };
+
+                let scan_fut = async {
+                    if do_scan {
+                        match scan_action(&action, &client).await {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                warn!(action = %action.raw, error = %e, "failed to scan action");
+                                None
+                            }
+                        }
+                    } else {
                         None
                     }
                 };
 
-                let advisory_results = join_all(providers.iter().map(|p| {
-                    let p = p.clone();
-                    let action = action.clone();
-                    async move { (p.name().to_string(), p.query(&action).await) }
-                }))
-                .await;
-
-                let mut advisories = Vec::new();
-                for (provider_name, result) in advisory_results {
-                    match result {
-                        Ok(advs) => advisories.extend(advs),
-                        Err(e) => {
-                            warn!(action = %action.raw, provider = %provider_name, error = %e, "failed to query advisories");
-                        }
-                    }
-                }
-                let advisories = deduplicate_advisories(advisories);
+                let (resolved_sha, advisories, scan) =
+                    tokio::join!(resolve_fut, advisory_fut, scan_fut);
 
                 output::ActionEntry {
                     action,
                     resolved_sha,
                     advisories,
+                    scan,
                 }
             }
         })
@@ -179,5 +223,11 @@ mod tests {
         let result = create_providers("invalid", &client);
         let err = result.err().expect("should be an error");
         assert!(err.to_string().contains("unknown provider"));
+    }
+
+    #[test]
+    fn audit_options_default_disables_scan() {
+        let opts = AuditOptions::default();
+        assert!(!opts.scan);
     }
 }

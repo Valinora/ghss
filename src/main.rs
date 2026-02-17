@@ -64,7 +64,9 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     let actions = ghss::parse_actions(&args.file)?;
     let github_client = GitHubClient::new(args.github_token.clone());
     let providers = ghss::create_providers(&args.provider, &github_client)?;
-    let entries = ghss::audit_actions(actions, &providers, &github_client).await;
+    let entries =
+        ghss::audit_actions(actions, &providers, &github_client, &ghss::AuditOptions::default())
+            .await;
 
     let formatter = output::formatter(args.json);
     formatter

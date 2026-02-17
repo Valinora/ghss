@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
+use crate::scan::ActionScan;
 
 #[derive(Serialize)]
 pub struct ActionEntry {
@@ -10,6 +11,8 @@ pub struct ActionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_sha: Option<String>,
     pub advisories: Vec<Advisory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan: Option<ActionScan>,
 }
 
 pub trait OutputFormatter {
@@ -33,6 +36,17 @@ impl OutputFormatter for TextOutput {
 
             if let Some(sha) = &entry.resolved_sha {
                 writeln!(writer, "  sha: {sha}")?;
+            }
+
+            if let Some(scan) = &entry.scan {
+                if let Some(lang) = &scan.primary_language {
+                    writeln!(writer, "  language: {lang}")?;
+                }
+                if !scan.ecosystems.is_empty() {
+                    let eco_list: Vec<String> =
+                        scan.ecosystems.iter().map(|e| e.to_string()).collect();
+                    writeln!(writer, "  ecosystems: {}", eco_list.join(", "))?;
+                }
             }
 
             if entry.advisories.is_empty() {
@@ -84,6 +98,7 @@ mod tests {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -99,6 +114,7 @@ mod tests {
             action: sample_action(),
             resolved_sha: Some("abc123".to_string()),
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -114,6 +130,7 @@ mod tests {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -136,6 +153,7 @@ mod tests {
                 affected_range: Some(">= 1.0, < 2.0".to_string()),
                 source: "ghsa".to_string(),
             }],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -152,6 +170,7 @@ mod tests {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -184,6 +203,7 @@ mod tests {
                 affected_range: Some(">= 1.0".to_string()),
                 source: "ghsa".to_string(),
             }],
+            scan: None,
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -202,6 +222,7 @@ mod tests {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
@@ -217,11 +238,74 @@ mod tests {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
+            scan: None,
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("actions/checkout@v4"));
+        assert!(output.contains("advisories: none"));
+    }
+
+    #[test]
+    fn json_output_omits_scan_when_none() {
+        let entries = vec![ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![],
+            scan: None,
+        }];
+        let mut buf = Vec::new();
+        JsonOutput.write_results(&entries, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert!(arr[0].get("scan").is_none());
+    }
+
+    #[test]
+    fn json_output_includes_scan_when_present() {
+        use crate::scan::{ActionScan, Ecosystem};
+        let entries = vec![ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![],
+            scan: Some(ActionScan {
+                primary_language: Some("TypeScript".to_string()),
+                ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
+            }),
+        }];
+        let mut buf = Vec::new();
+        JsonOutput.write_results(&entries, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let arr = parsed.as_array().unwrap();
+        let scan = &arr[0]["scan"];
+        assert_eq!(scan["primary_language"], "TypeScript");
+        let ecos = scan["ecosystems"].as_array().unwrap();
+        assert_eq!(ecos.len(), 2);
+        assert_eq!(ecos[0], "npm");
+        assert_eq!(ecos[1], "docker");
+    }
+
+    #[test]
+    fn text_output_with_scan_data() {
+        use crate::scan::{ActionScan, Ecosystem};
+        let entries = vec![ActionEntry {
+            action: sample_action(),
+            resolved_sha: Some("abc123".to_string()),
+            advisories: vec![],
+            scan: Some(ActionScan {
+                primary_language: Some("TypeScript".to_string()),
+                ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
+            }),
+        }];
+        let mut buf = Vec::new();
+        TextOutput.write_results(&entries, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("language: TypeScript"));
+        assert!(output.contains("ecosystems: npm, docker"));
+        assert!(output.contains("sha: abc123"));
         assert!(output.contains("advisories: none"));
     }
 }
