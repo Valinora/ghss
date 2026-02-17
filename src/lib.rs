@@ -3,6 +3,7 @@ mod modules;
 
 pub use modules::action_ref;
 pub use modules::advisory;
+pub use modules::context;
 pub use modules::deps;
 pub use modules::github;
 pub use modules::output;
@@ -23,6 +24,7 @@ use tracing::warn;
 
 use action_ref::ActionRef;
 use advisory::deduplicate_advisories;
+use context::AuditContext;
 use github::GitHubClient;
 use providers::ghsa::GhsaProvider;
 use providers::osv::{OsvActionProvider, OsvClient};
@@ -216,7 +218,7 @@ impl Auditor {
 
                 async move {
                     let _permit = sem.acquire().await.expect("semaphore closed");
-                    Self::audit_one(action, client, providers, do_resolve, do_scan, do_deps).await
+                    Self::audit_one(action, idx, client, providers, do_resolve, do_scan, do_deps).await
                 }
             })
             .collect();
@@ -226,6 +228,7 @@ impl Auditor {
 
     async fn audit_one(
         action: ActionRef,
+        index: usize,
         client: GitHubClient,
         providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
         do_resolve: bool,
@@ -299,13 +302,19 @@ impl Auditor {
             vec![]
         };
 
-        output::ActionEntry {
+        AuditContext {
             action,
-            resolved_sha,
+            depth: 0,
+            parent: None,
+            children: vec![],
+            index: Some(index),
+            resolved_ref: resolved_sha,
             advisories,
             scan,
-            dep_vulnerabilities,
+            dependencies: dep_vulnerabilities,
+            errors: vec![],
         }
+        .into()
     }
 }
 
