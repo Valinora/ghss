@@ -15,18 +15,11 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use anyhow::bail;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use action_ref::ActionRef;
-use github::GitHubClient;
-use pipeline::PipelineBuilder;
-use providers::ghsa::GhsaProvider;
-use providers::osv::{OsvActionProvider, OsvClient, OsvPackageProvider};
-use providers::{ActionAdvisoryProvider, PackageAdvisoryProvider};
-use stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
 
 /// Specifies which actions to scan, by 1-indexed position.
 ///
@@ -118,25 +111,6 @@ impl FromStr for ScanSelection {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AuditOptions {
-    pub scan: ScanSelection,
-    pub resolve_refs: bool,
-    pub max_concurrency: usize,
-    pub deps: bool,
-}
-
-impl Default for AuditOptions {
-    fn default() -> Self {
-        Self {
-            scan: ScanSelection::None,
-            resolve_refs: true,
-            max_concurrency: 10,
-            deps: false,
-        }
-    }
-}
-
 fn is_third_party(uses: &str) -> bool {
     !uses.starts_with("./") && !uses.starts_with("docker://")
 }
@@ -160,90 +134,6 @@ pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
     Ok(unique.into_iter().collect())
 }
 
-fn create_providers(
-    provider: &str,
-    github_client: &GitHubClient,
-) -> anyhow::Result<Vec<Arc<dyn ActionAdvisoryProvider>>> {
-    match provider {
-        "ghsa" => Ok(vec![Arc::new(GhsaProvider::new(github_client.clone()))]),
-        "osv" => Ok(vec![Arc::new(OsvActionProvider::new(OsvClient::new()))]),
-        "all" => Ok(vec![
-            Arc::new(GhsaProvider::new(github_client.clone())),
-            Arc::new(OsvActionProvider::new(OsvClient::new())),
-        ]),
-        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
-    }
-}
-
-fn create_package_providers(
-    provider: &str,
-) -> anyhow::Result<Vec<Arc<dyn PackageAdvisoryProvider>>> {
-    match provider {
-        "ghsa" => Ok(vec![]),
-        "osv" | "all" => Ok(vec![Arc::new(OsvPackageProvider::new(OsvClient::new()))]),
-        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
-    }
-}
-
-pub struct Auditor {
-    client: GitHubClient,
-    providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
-    package_providers: Vec<Arc<dyn PackageAdvisoryProvider>>,
-    options: AuditOptions,
-}
-
-impl Auditor {
-    pub fn new(
-        provider: &str,
-        client: GitHubClient,
-        options: AuditOptions,
-    ) -> anyhow::Result<Self> {
-        let providers = create_providers(provider, &client)?;
-        let package_providers = create_package_providers(provider)?;
-        Ok(Self {
-            client,
-            providers,
-            package_providers,
-            options,
-        })
-    }
-
-    pub async fn audit(&self, actions: Vec<ActionRef>) -> Vec<output::ActionEntry> {
-        info!(action_count = actions.len(), "starting audit");
-        let has_any_scan = !matches!(self.options.scan, ScanSelection::None);
-        let has_token = self.client.has_token();
-        if has_any_scan && !has_token {
-            warn!("scan enabled but no GitHub token provided; skipping scan");
-        }
-
-        let mut builder = PipelineBuilder::new()
-            .max_concurrency(self.options.max_concurrency);
-
-        if self.options.resolve_refs {
-            builder = builder.stage(RefResolveStage::new(self.client.clone()));
-        }
-
-        builder = builder.stage(AdvisoryStage::new(self.providers.clone()));
-
-        if has_any_scan && has_token {
-            builder = builder.stage(ScanStage::new(
-                self.client.clone(),
-                self.options.scan.clone(),
-            ));
-        }
-
-        if self.options.deps {
-            builder = builder.stage(DependencyStage::new(
-                self.client.clone(),
-                self.package_providers.clone(),
-            ));
-        }
-
-        let pipeline = builder.build();
-        pipeline.run(actions).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,55 +154,6 @@ mod tests {
     fn docker_actions_are_not_third_party() {
         assert!(!is_third_party("docker://node:18"));
         assert!(!is_third_party("docker://alpine:3.18"));
-    }
-
-    #[test]
-    fn audit_options_default_disables_scan() {
-        let opts = AuditOptions::default();
-        assert_eq!(opts.scan, ScanSelection::None);
-    }
-
-    #[test]
-    fn audit_options_default_enables_resolve_refs() {
-        let opts = AuditOptions::default();
-        assert!(opts.resolve_refs);
-    }
-
-    #[test]
-    fn audit_options_default_concurrency_is_10() {
-        let opts = AuditOptions::default();
-        assert_eq!(opts.max_concurrency, 10);
-    }
-
-    #[test]
-    fn auditor_new_ghsa() {
-        let client = GitHubClient::new(None);
-        let auditor = Auditor::new("ghsa", client, AuditOptions::default()).unwrap();
-        assert_eq!(auditor.providers.len(), 1);
-        assert_eq!(auditor.providers[0].name(), "GHSA");
-    }
-
-    #[test]
-    fn auditor_new_osv() {
-        let client = GitHubClient::new(None);
-        let auditor = Auditor::new("osv", client, AuditOptions::default()).unwrap();
-        assert_eq!(auditor.providers.len(), 1);
-        assert_eq!(auditor.providers[0].name(), "OSV");
-    }
-
-    #[test]
-    fn auditor_new_all() {
-        let client = GitHubClient::new(None);
-        let auditor = Auditor::new("all", client, AuditOptions::default()).unwrap();
-        assert_eq!(auditor.providers.len(), 2);
-    }
-
-    #[test]
-    fn auditor_new_unknown_errors() {
-        let client = GitHubClient::new(None);
-        let result = Auditor::new("invalid", client, AuditOptions::default());
-        let err = result.err().expect("should be an error");
-        assert!(err.to_string().contains("unknown provider"));
     }
 
     #[test]

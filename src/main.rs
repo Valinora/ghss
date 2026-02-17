@@ -7,6 +7,9 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use ghss::github::GitHubClient;
 use ghss::output;
+use ghss::pipeline::PipelineBuilder;
+use ghss::providers;
+use ghss::stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
 
 /// Audit GitHub Actions workflows for third-party action usage
 #[derive(Parser)]
@@ -76,13 +79,27 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         (None, true) => ghss::ScanSelection::All,
         (None, false) => ghss::ScanSelection::None,
     };
-    let options = ghss::AuditOptions {
-        scan,
-        deps: args.deps,
-        ..ghss::AuditOptions::default()
-    };
-    let auditor = ghss::Auditor::new(&args.provider, client, options)?;
-    let entries = auditor.audit(actions).await;
+    let has_any_scan = !matches!(scan, ghss::ScanSelection::None);
+    let has_token = client.has_token();
+    if has_any_scan && !has_token {
+        tracing::warn!("scan enabled but no GitHub token provided; skipping scan");
+    }
+
+    let action_providers = providers::create_action_providers(&args.provider, &client)?;
+    let package_providers = providers::create_package_providers(&args.provider)?;
+
+    let mut builder = PipelineBuilder::default()
+        .stage(RefResolveStage::new(client.clone()))
+        .stage(AdvisoryStage::new(action_providers));
+
+    if has_any_scan && has_token {
+        builder = builder.stage(ScanStage::new(client.clone(), scan));
+    }
+    if args.deps {
+        builder = builder.stage(DependencyStage::new(client.clone(), package_providers));
+    }
+
+    let entries = builder.build().run(actions).await;
 
     let formatter = output::formatter(args.json);
     formatter
