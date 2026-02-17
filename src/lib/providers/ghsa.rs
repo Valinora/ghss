@@ -5,7 +5,7 @@ use serde_json::Value;
 use tracing::instrument;
 
 use crate::action_ref::ActionRef;
-use crate::advisory::{Advisory, AdvisoryProvider};
+use crate::advisory::Advisory;
 use crate::github::{GitHubClient, GITHUB_API_BASE};
 
 use super::ActionAdvisoryProvider;
@@ -32,27 +32,6 @@ pub struct GhsaProvider {
 impl GhsaProvider {
     pub fn new(client: GitHubClient) -> Self {
         Self { client }
-    }
-}
-
-#[async_trait]
-impl AdvisoryProvider for GhsaProvider {
-    #[instrument(skip(self), fields(action = %action.raw))]
-    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
-        let package_name = action.package_name();
-        let json = self
-            .client
-            .api_get(&format!(
-                "{GITHUB_API_BASE}/advisories?ecosystem=actions&affects={package_name}"
-            ))
-            .await
-            .with_context(|| format!("failed to query advisories for {package_name}"))?;
-
-        parse_advisories(json)
-    }
-
-    fn name(&self) -> &str {
-        "GHSA"
     }
 }
 

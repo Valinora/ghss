@@ -6,7 +6,7 @@ use tracing::{instrument, warn};
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
 use crate::github::GitHubClient;
-use crate::osv;
+use crate::providers::osv;
 use crate::scan::Ecosystem;
 
 const OSV_API_URL: &str = "https://api.osv.dev/v1/query";

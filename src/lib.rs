@@ -4,10 +4,9 @@ mod modules;
 pub use modules::action_ref;
 pub use modules::advisory;
 pub use modules::deps;
-pub use modules::ghsa;
 pub use modules::github;
-pub use modules::osv;
 pub use modules::output;
+pub use modules::providers;
 pub use modules::scan;
 pub use modules::workflow;
 
@@ -23,10 +22,11 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 use action_ref::ActionRef;
-use advisory::{deduplicate_advisories, AdvisoryProvider};
-use ghsa::GhsaProvider;
+use advisory::deduplicate_advisories;
 use github::GitHubClient;
-use osv::OsvProvider;
+use providers::ghsa::GhsaProvider;
+use providers::osv::{OsvActionProvider, OsvClient};
+use providers::ActionAdvisoryProvider;
 
 /// Specifies which actions to scan, by 1-indexed position.
 ///
@@ -162,13 +162,13 @@ pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
 fn create_providers(
     provider: &str,
     github_client: &GitHubClient,
-) -> anyhow::Result<Vec<Arc<dyn AdvisoryProvider>>> {
+) -> anyhow::Result<Vec<Arc<dyn ActionAdvisoryProvider>>> {
     match provider {
         "ghsa" => Ok(vec![Arc::new(GhsaProvider::new(github_client.clone()))]),
-        "osv" => Ok(vec![Arc::new(OsvProvider::new())]),
+        "osv" => Ok(vec![Arc::new(OsvActionProvider::new(OsvClient::new()))]),
         "all" => Ok(vec![
             Arc::new(GhsaProvider::new(github_client.clone())),
-            Arc::new(OsvProvider::new()),
+            Arc::new(OsvActionProvider::new(OsvClient::new())),
         ]),
         other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
     }
@@ -176,7 +176,7 @@ fn create_providers(
 
 pub struct Auditor {
     client: GitHubClient,
-    providers: Vec<Arc<dyn AdvisoryProvider>>,
+    providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
     options: AuditOptions,
 }
 
@@ -210,7 +210,7 @@ impl Auditor {
             .enumerate()
             .map(|(idx, action)| {
                 let client = self.client.clone();
-                let providers: Vec<Arc<dyn AdvisoryProvider>> = self.providers.clone();
+                let providers: Vec<Arc<dyn ActionAdvisoryProvider>> = self.providers.clone();
                 let sem = sem.clone();
                 let do_scan = has_token && self.options.scan.should_scan(idx);
 
@@ -227,7 +227,7 @@ impl Auditor {
     async fn audit_one(
         action: ActionRef,
         client: GitHubClient,
-        providers: Vec<Arc<dyn AdvisoryProvider>>,
+        providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
         do_resolve: bool,
         do_scan: bool,
         do_deps: bool,

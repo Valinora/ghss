@@ -4,7 +4,7 @@ use serde::Deserialize;
 use tracing::instrument;
 
 use crate::action_ref::ActionRef;
-use crate::advisory::{Advisory, AdvisoryProvider};
+use crate::advisory::Advisory;
 
 use super::{ActionAdvisoryProvider, PackageAdvisoryProvider};
 
@@ -110,37 +110,7 @@ impl OsvClient {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy provider — implements old AdvisoryProvider trait, delegates to OsvClient
-// ---------------------------------------------------------------------------
-
-pub struct OsvProvider {
-    client: OsvClient,
-}
-
-impl OsvProvider {
-    pub fn new() -> Self {
-        Self {
-            client: OsvClient::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl AdvisoryProvider for OsvProvider {
-    #[instrument(skip(self), fields(action = %action.raw))]
-    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
-        self.client
-            .query(&action.package_name(), "GitHub Actions")
-            .await
-    }
-
-    fn name(&self) -> &str {
-        "OSV"
-    }
-}
-
-// ---------------------------------------------------------------------------
-// New providers — implement the split traits
+// Trait providers — implement the split traits
 // ---------------------------------------------------------------------------
 
 pub struct OsvActionProvider {
