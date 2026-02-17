@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
+use crate::deps::DependencyReport;
 use crate::scan::ActionScan;
 
 #[derive(Serialize)]
@@ -13,6 +14,8 @@ pub struct ActionEntry {
     pub advisories: Vec<Advisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scan: Option<ActionScan>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dep_vulnerabilities: Vec<DependencyReport>,
 }
 
 pub trait OutputFormatter {
@@ -54,6 +57,16 @@ impl OutputFormatter for TextOutput {
             } else {
                 for adv in &entry.advisories {
                     writeln!(writer, "  {adv}")?;
+                }
+            }
+
+            if !entry.dep_vulnerabilities.is_empty() {
+                writeln!(writer, "  dependency vulnerabilities:")?;
+                for dep in &entry.dep_vulnerabilities {
+                    writeln!(writer, "    {}@{} ({}):", dep.package, dep.version, dep.ecosystem)?;
+                    for adv in &dep.advisories {
+                        writeln!(writer, "      {adv}")?;
+                    }
                 }
             }
         }
@@ -99,6 +112,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -115,6 +129,7 @@ mod tests {
             resolved_sha: Some("abc123".to_string()),
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -131,6 +146,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -154,6 +170,7 @@ mod tests {
                 source: "ghsa".to_string(),
             }],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = TextOutput;
@@ -171,6 +188,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -204,6 +222,7 @@ mod tests {
                 source: "ghsa".to_string(),
             }],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         let fmt = JsonOutput;
@@ -223,6 +242,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
@@ -239,6 +259,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         f.write_results(&entries, &mut buf).unwrap();
@@ -254,6 +275,7 @@ mod tests {
             resolved_sha: None,
             advisories: vec![],
             scan: None,
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         JsonOutput.write_results(&entries, &mut buf).unwrap();
@@ -274,6 +296,7 @@ mod tests {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         JsonOutput.write_results(&entries, &mut buf).unwrap();
@@ -299,6 +322,7 @@ mod tests {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),
+            dep_vulnerabilities: vec![],
         }];
         let mut buf = Vec::new();
         TextOutput.write_results(&entries, &mut buf).unwrap();

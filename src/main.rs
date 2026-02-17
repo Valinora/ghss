@@ -28,6 +28,10 @@ struct Cli {
     #[arg(long)]
     scan: Option<ghss::ScanSelection>,
 
+    /// Scan npm dependencies for known vulnerabilities (auto-enables --scan all)
+    #[arg(long)]
+    deps: bool,
+
     /// GitHub personal access token (or set GITHUB_TOKEN env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
@@ -67,8 +71,14 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
 
     let actions = ghss::parse_actions(&args.file)?;
     let client = GitHubClient::new(args.github_token.clone());
+    let scan = match (&args.scan, args.deps) {
+        (Some(sel), _) => sel.clone(),
+        (None, true) => ghss::ScanSelection::All,
+        (None, false) => ghss::ScanSelection::None,
+    };
     let options = ghss::AuditOptions {
-        scan: args.scan.clone().unwrap_or(ghss::ScanSelection::None),
+        scan,
+        deps: args.deps,
         ..ghss::AuditOptions::default()
     };
     let auditor = ghss::Auditor::new(&args.provider, client, options)?;

@@ -3,6 +3,7 @@ mod modules;
 
 pub use modules::action_ref;
 pub use modules::advisory;
+pub use modules::deps;
 pub use modules::ghsa;
 pub use modules::github;
 pub use modules::osv;
@@ -122,6 +123,7 @@ pub struct AuditOptions {
     pub scan: ScanSelection,
     pub resolve_refs: bool,
     pub max_concurrency: usize,
+    pub deps: bool,
 }
 
 impl Default for AuditOptions {
@@ -130,6 +132,7 @@ impl Default for AuditOptions {
             scan: ScanSelection::None,
             resolve_refs: true,
             max_concurrency: 10,
+            deps: false,
         }
     }
 }
@@ -194,6 +197,7 @@ impl Auditor {
     pub async fn audit(&self, actions: Vec<ActionRef>) -> Vec<output::ActionEntry> {
         let sem = Arc::new(Semaphore::new(self.options.max_concurrency));
         let do_resolve = self.options.resolve_refs;
+        let do_deps = self.options.deps;
 
         let has_any_scan = !matches!(self.options.scan, ScanSelection::None);
         let has_token = self.client.has_token();
@@ -212,7 +216,7 @@ impl Auditor {
 
                 async move {
                     let _permit = sem.acquire().await.expect("semaphore closed");
-                    Self::audit_one(action, client, providers, do_resolve, do_scan).await
+                    Self::audit_one(action, client, providers, do_resolve, do_scan, do_deps).await
                 }
             })
             .collect();
@@ -226,7 +230,9 @@ impl Auditor {
         providers: Vec<Arc<dyn AdvisoryProvider>>,
         do_resolve: bool,
         do_scan: bool,
+        do_deps: bool,
     ) -> output::ActionEntry {
+        // Phase 1: resolve ref, query advisories, scan repo (concurrent)
         let resolve_fut = async {
             if !do_resolve {
                 return None;
@@ -276,11 +282,29 @@ impl Auditor {
 
         let (resolved_sha, advisories, scan) = tokio::join!(resolve_fut, advisory_fut, scan_fut);
 
+        // Phase 2: dependency scanning (depends on scan results)
+        let dep_vulnerabilities = if do_deps {
+            let ecosystems = scan
+                .as_ref()
+                .map(|s| s.ecosystems.as_slice())
+                .unwrap_or(&[]);
+            match deps::scan_dependencies(&action, ecosystems, &client).await {
+                Ok(reports) => reports,
+                Err(e) => {
+                    warn!(action = %action.raw, error = %e, "failed to scan dependencies");
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+
         output::ActionEntry {
             action,
             resolved_sha,
             advisories,
             scan,
+            dep_vulnerabilities,
         }
     }
 }

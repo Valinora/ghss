@@ -131,6 +131,43 @@ impl GitHubClient {
             .ok_or_else(|| anyhow::anyhow!("{url} returned HTTP 404"))
     }
 
+    /// Fetch raw file content from a repository via raw.githubusercontent.com.
+    #[instrument(skip(self))]
+    pub async fn get_raw_content(
+        &self,
+        owner: &str,
+        repo: &str,
+        git_ref: &str,
+        path: &str,
+    ) -> Result<String> {
+        let url = format!(
+            "https://raw.githubusercontent.com/{owner}/{repo}/{git_ref}/{path}"
+        );
+
+        let mut request = self.client.get(&url);
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch {url}"))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            bail!("{path} not found in {owner}/{repo}@{git_ref}");
+        }
+        if !status.is_success() {
+            bail!("{url} returned HTTP {status}");
+        }
+
+        response
+            .text()
+            .await
+            .with_context(|| format!("failed to read body from {url}"))
+    }
+
     /// Send a GraphQL query to the GitHub API. Requires authentication.
     #[instrument(skip(self, query))]
     pub async fn graphql_post(&self, query: &str) -> Result<Value> {

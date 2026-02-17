@@ -1,5 +1,6 @@
 pub mod action_ref;
 pub mod advisory;
+pub mod deps;
 pub mod ghsa;
 pub mod github;
 pub mod osv;

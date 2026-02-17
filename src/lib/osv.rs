@@ -110,7 +110,7 @@ impl AdvisoryProvider for OsvProvider {
     }
 }
 
-fn parse_osv_response(json: serde_json::Value) -> Result<Vec<Advisory>> {
+pub(crate) fn parse_osv_response(json: serde_json::Value) -> Result<Vec<Advisory>> {
     let response: OsvResponse =
         serde_json::from_value(json).context("failed to deserialize OSV response")?;
 
