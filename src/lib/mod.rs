@@ -6,4 +6,5 @@ pub mod github;
 pub mod output;
 pub mod providers;
 pub mod scan;
+pub mod stage;
 pub mod workflow;
