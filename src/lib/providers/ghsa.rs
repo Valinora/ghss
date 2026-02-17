@@ -5,8 +5,10 @@ use serde_json::Value;
 use tracing::instrument;
 
 use crate::action_ref::ActionRef;
-use crate::advisory::{Advisory, AdvisoryProvider};
+use crate::advisory::Advisory;
 use crate::github::{GitHubClient, GITHUB_API_BASE};
+
+use super::ActionAdvisoryProvider;
 
 #[derive(Deserialize)]
 struct GhsaAdvisoryResponse {
@@ -34,7 +36,7 @@ impl GhsaProvider {
 }
 
 #[async_trait]
-impl AdvisoryProvider for GhsaProvider {
+impl ActionAdvisoryProvider for GhsaProvider {
     #[instrument(skip(self), fields(action = %action.raw))]
     async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();

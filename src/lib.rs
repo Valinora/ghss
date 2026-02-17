@@ -3,12 +3,12 @@ mod modules;
 
 pub use modules::action_ref;
 pub use modules::advisory;
-pub use modules::deps;
-pub use modules::ghsa;
+pub use modules::context;
 pub use modules::github;
-pub use modules::osv;
 pub use modules::output;
-pub use modules::scan;
+pub use modules::pipeline;
+pub use modules::providers;
+pub use modules::stages;
 pub use modules::workflow;
 
 use std::collections::BTreeSet;
@@ -18,15 +18,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::bail;
-use futures::future::join_all;
-use tokio::sync::Semaphore;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use action_ref::ActionRef;
-use advisory::{deduplicate_advisories, AdvisoryProvider};
-use ghsa::GhsaProvider;
 use github::GitHubClient;
-use osv::OsvProvider;
+use pipeline::PipelineBuilder;
+use providers::ghsa::GhsaProvider;
+use providers::osv::{OsvActionProvider, OsvClient, OsvPackageProvider};
+use providers::{ActionAdvisoryProvider, PackageAdvisoryProvider};
+use stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
 
 /// Specifies which actions to scan, by 1-indexed position.
 ///
@@ -156,27 +156,39 @@ pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
         })
         .collect();
 
+    debug!(count = unique.len(), "parsed unique third-party actions");
     Ok(unique.into_iter().collect())
 }
 
 fn create_providers(
     provider: &str,
     github_client: &GitHubClient,
-) -> anyhow::Result<Vec<Arc<dyn AdvisoryProvider>>> {
+) -> anyhow::Result<Vec<Arc<dyn ActionAdvisoryProvider>>> {
     match provider {
         "ghsa" => Ok(vec![Arc::new(GhsaProvider::new(github_client.clone()))]),
-        "osv" => Ok(vec![Arc::new(OsvProvider::new())]),
+        "osv" => Ok(vec![Arc::new(OsvActionProvider::new(OsvClient::new()))]),
         "all" => Ok(vec![
             Arc::new(GhsaProvider::new(github_client.clone())),
-            Arc::new(OsvProvider::new()),
+            Arc::new(OsvActionProvider::new(OsvClient::new())),
         ]),
+        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
+    }
+}
+
+fn create_package_providers(
+    provider: &str,
+) -> anyhow::Result<Vec<Arc<dyn PackageAdvisoryProvider>>> {
+    match provider {
+        "ghsa" => Ok(vec![]),
+        "osv" | "all" => Ok(vec![Arc::new(OsvPackageProvider::new(OsvClient::new()))]),
         other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
     }
 }
 
 pub struct Auditor {
     client: GitHubClient,
-    providers: Vec<Arc<dyn AdvisoryProvider>>,
+    providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
+    package_providers: Vec<Arc<dyn PackageAdvisoryProvider>>,
     options: AuditOptions,
 }
 
@@ -187,125 +199,48 @@ impl Auditor {
         options: AuditOptions,
     ) -> anyhow::Result<Self> {
         let providers = create_providers(provider, &client)?;
+        let package_providers = create_package_providers(provider)?;
         Ok(Self {
             client,
             providers,
+            package_providers,
             options,
         })
     }
 
     pub async fn audit(&self, actions: Vec<ActionRef>) -> Vec<output::ActionEntry> {
-        let sem = Arc::new(Semaphore::new(self.options.max_concurrency));
-        let do_resolve = self.options.resolve_refs;
-        let do_deps = self.options.deps;
-
+        info!(action_count = actions.len(), "starting audit");
         let has_any_scan = !matches!(self.options.scan, ScanSelection::None);
         let has_token = self.client.has_token();
         if has_any_scan && !has_token {
             warn!("scan enabled but no GitHub token provided; skipping scan");
         }
 
-        let futures: Vec<_> = actions
-            .into_iter()
-            .enumerate()
-            .map(|(idx, action)| {
-                let client = self.client.clone();
-                let providers: Vec<Arc<dyn AdvisoryProvider>> = self.providers.clone();
-                let sem = sem.clone();
-                let do_scan = has_token && self.options.scan.should_scan(idx);
+        let mut builder = PipelineBuilder::new()
+            .max_concurrency(self.options.max_concurrency);
 
-                async move {
-                    let _permit = sem.acquire().await.expect("semaphore closed");
-                    Self::audit_one(action, client, providers, do_resolve, do_scan, do_deps).await
-                }
-            })
-            .collect();
-
-        join_all(futures).await
-    }
-
-    async fn audit_one(
-        action: ActionRef,
-        client: GitHubClient,
-        providers: Vec<Arc<dyn AdvisoryProvider>>,
-        do_resolve: bool,
-        do_scan: bool,
-        do_deps: bool,
-    ) -> output::ActionEntry {
-        // Phase 1: resolve ref, query advisories, scan repo (concurrent)
-        let resolve_fut = async {
-            if !do_resolve {
-                return None;
-            }
-            match client.resolve_ref(&action).await {
-                Ok(sha) => Some(sha),
-                Err(e) => {
-                    warn!(action = %action.raw, error = %e, "failed to resolve ref");
-                    None
-                }
-            }
-        };
-
-        let advisory_fut = async {
-            let results = join_all(providers.iter().map(|p| {
-                let p = p.clone();
-                let action = action.clone();
-                async move { (p.name().to_string(), p.query(&action).await) }
-            }))
-            .await;
-
-            let mut advisories = Vec::new();
-            for (provider_name, result) in results {
-                match result {
-                    Ok(advs) => advisories.extend(advs),
-                    Err(e) => {
-                        warn!(action = %action.raw, provider = %provider_name, error = %e, "failed to query advisories");
-                    }
-                }
-            }
-            deduplicate_advisories(advisories)
-        };
-
-        let scan_fut = async {
-            if do_scan {
-                match scan::scan_action(&action, &client).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        warn!(action = %action.raw, error = %e, "failed to scan action");
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        };
-
-        let (resolved_sha, advisories, scan) = tokio::join!(resolve_fut, advisory_fut, scan_fut);
-
-        // Phase 2: dependency scanning (depends on scan results)
-        let dep_vulnerabilities = if do_deps {
-            let ecosystems = scan
-                .as_ref()
-                .map(|s| s.ecosystems.as_slice())
-                .unwrap_or(&[]);
-            match deps::scan_dependencies(&action, ecosystems, &client).await {
-                Ok(reports) => reports,
-                Err(e) => {
-                    warn!(action = %action.raw, error = %e, "failed to scan dependencies");
-                    vec![]
-                }
-            }
-        } else {
-            vec![]
-        };
-
-        output::ActionEntry {
-            action,
-            resolved_sha,
-            advisories,
-            scan,
-            dep_vulnerabilities,
+        if self.options.resolve_refs {
+            builder = builder.stage(RefResolveStage::new(self.client.clone()));
         }
+
+        builder = builder.stage(AdvisoryStage::new(self.providers.clone()));
+
+        if has_any_scan && has_token {
+            builder = builder.stage(ScanStage::new(
+                self.client.clone(),
+                self.options.scan.clone(),
+            ));
+        }
+
+        if self.options.deps {
+            builder = builder.stage(DependencyStage::new(
+                self.client.clone(),
+                self.package_providers.clone(),
+            ));
+        }
+
+        let pipeline = builder.build();
+        pipeline.run(actions).await
     }
 }
 

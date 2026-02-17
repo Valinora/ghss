@@ -96,6 +96,7 @@ impl GitHubClient {
         bail!("unexpected ref object type: {obj_type}");
     }
 
+    #[tracing::instrument(skip(self))]
     async fn api_get_optional(&self, url: &str) -> Result<Option<Value>> {
         let mut request = self
             .client

@@ -1,11 +1,16 @@
 use std::fmt;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
+use tracing::{debug, instrument, warn};
 
 use crate::action_ref::ActionRef;
+use crate::context::{AuditContext, StageError};
 use crate::github::GitHubClient;
+use crate::ScanSelection;
+use super::Stage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,7 +43,7 @@ impl fmt::Display for Ecosystem {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ActionScan {
+pub struct ScanResult {
     pub primary_language: Option<String>,
     pub ecosystems: Vec<Ecosystem>,
 }
@@ -99,10 +104,8 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
     let mut seen = Vec::new();
 
     for (alias, ecosystem) in MANIFEST_ALIASES {
-        if repo.get(*alias).is_some_and(|v| !v.is_null()) {
-            if !seen.contains(ecosystem) {
-                seen.push(ecosystem.clone());
-            }
+        if repo.get(*alias).is_some_and(|v| !v.is_null()) && !seen.contains(ecosystem) {
+            seen.push(ecosystem.clone());
         }
     }
 
@@ -110,10 +113,11 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
 }
 
 /// Scan an action's repository to detect languages and package ecosystems.
+#[tracing::instrument(skip(client), fields(action = %action.raw))]
 pub async fn scan_action(
     action: &ActionRef,
     client: &GitHubClient,
-) -> Result<ActionScan> {
+) -> Result<ScanResult> {
     let query = build_query(&action.owner, &action.repo);
     let data = client.graphql_post(&query).await?;
 
@@ -121,10 +125,53 @@ pub async fn scan_action(
         .get("repository")
         .ok_or_else(|| anyhow::anyhow!("repository not found: {}/{}", action.owner, action.repo))?;
 
-    Ok(ActionScan {
+    Ok(ScanResult {
         primary_language: extract_primary_language(repo),
         ecosystems: extract_ecosystems(repo),
     })
+}
+
+pub struct ScanStage {
+    client: GitHubClient,
+    selection: ScanSelection,
+}
+
+impl ScanStage {
+    pub fn new(client: GitHubClient, selection: ScanSelection) -> Self {
+        Self { client, selection }
+    }
+}
+
+#[async_trait]
+impl Stage for ScanStage {
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
+        let should_scan = match ctx.index {
+            Some(idx) => self.selection.should_scan(idx),
+            None => matches!(self.selection, ScanSelection::All),
+        };
+
+        if !should_scan {
+            debug!(action = %ctx.action.raw, "scan skipped");
+            return Ok(());
+        }
+
+        match scan_action(&ctx.action, &self.client).await {
+            Ok(s) => ctx.scan = Some(s),
+            Err(e) => {
+                warn!(action = %ctx.action.raw, error = %e, "failed to scan action");
+                ctx.errors.push(StageError {
+                    stage: self.name().to_string(),
+                    message: e.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "Scan"
+    }
 }
 
 #[cfg(test)]

@@ -2,8 +2,9 @@ use serde::Serialize;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
-use crate::deps::DependencyReport;
-use crate::scan::ActionScan;
+use crate::context::AuditContext;
+use crate::stages::dependency::DependencyReport;
+use crate::stages::ScanResult;
 
 #[derive(Serialize)]
 pub struct ActionEntry {
@@ -13,9 +14,21 @@ pub struct ActionEntry {
     pub resolved_sha: Option<String>,
     pub advisories: Vec<Advisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scan: Option<ActionScan>,
+    pub scan: Option<ScanResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dep_vulnerabilities: Vec<DependencyReport>,
+}
+
+impl From<AuditContext> for ActionEntry {
+    fn from(ctx: AuditContext) -> Self {
+        Self {
+            action: ctx.action,
+            resolved_sha: ctx.resolved_ref,
+            advisories: ctx.advisories,
+            scan: ctx.scan,
+            dep_vulnerabilities: ctx.dependencies,
+        }
+    }
 }
 
 pub trait OutputFormatter {
@@ -287,12 +300,12 @@ mod tests {
 
     #[test]
     fn json_output_includes_scan_when_present() {
-        use crate::scan::{ActionScan, Ecosystem};
+        use crate::stages::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
             advisories: vec![],
-            scan: Some(ActionScan {
+            scan: Some(ScanResult {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),
@@ -312,13 +325,51 @@ mod tests {
     }
 
     #[test]
+    fn audit_context_converts_to_action_entry() {
+        use crate::context::AuditContext;
+        use crate::stages::{ScanResult, Ecosystem};
+
+        let ctx = AuditContext {
+            action: sample_action(),
+            depth: 0,
+            parent: None,
+            children: vec![],
+            index: Some(0),
+            resolved_ref: Some("abc123".to_string()),
+            advisories: vec![Advisory {
+                id: "GHSA-1234".to_string(),
+                aliases: vec![],
+                summary: "Bad thing".to_string(),
+                severity: "high".to_string(),
+                url: "https://example.com".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: Some(ScanResult {
+                primary_language: Some("TypeScript".to_string()),
+                ecosystems: vec![Ecosystem::Npm],
+            }),
+            dependencies: vec![],
+            errors: vec![],
+        };
+
+        let entry: ActionEntry = ctx.into();
+        assert_eq!(entry.action, sample_action());
+        assert_eq!(entry.resolved_sha, Some("abc123".to_string()));
+        assert_eq!(entry.advisories.len(), 1);
+        assert_eq!(entry.advisories[0].id, "GHSA-1234");
+        assert!(entry.scan.is_some());
+        assert!(entry.dep_vulnerabilities.is_empty());
+    }
+
+    #[test]
     fn text_output_with_scan_data() {
-        use crate::scan::{ActionScan, Ecosystem};
+        use crate::stages::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: Some("abc123".to_string()),
             advisories: vec![],
-            scan: Some(ActionScan {
+            scan: Some(ScanResult {
                 primary_language: Some("TypeScript".to_string()),
                 ecosystems: vec![Ecosystem::Npm, Ecosystem::Docker],
             }),

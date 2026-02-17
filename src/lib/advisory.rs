@@ -1,10 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use async_trait::async_trait;
 use serde::Serialize;
-
-use crate::action_ref::ActionRef;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Advisory {
@@ -27,12 +24,6 @@ impl fmt::Display for Advisory {
         }
         Ok(())
     }
-}
-
-#[async_trait]
-pub trait AdvisoryProvider: Send + Sync {
-    async fn query(&self, action: &ActionRef) -> anyhow::Result<Vec<Advisory>>;
-    fn name(&self) -> &str;
 }
 
 /// Deduplicate advisories by ID and aliases.
