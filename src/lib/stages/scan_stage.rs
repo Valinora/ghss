@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tracing::warn;
+use tracing::{debug, instrument, warn};
 
 use crate::context::{AuditContext, StageError};
 use crate::github::GitHubClient;
@@ -20,6 +20,7 @@ impl ScanStage {
 
 #[async_trait]
 impl Stage for ScanStage {
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let should_scan = match ctx.index {
             Some(idx) => self.selection.should_scan(idx),
@@ -27,6 +28,7 @@ impl Stage for ScanStage {
         };
 
         if !should_scan {
+            debug!(action = %ctx.action.raw, "scan skipped");
             return Ok(());
         }
 

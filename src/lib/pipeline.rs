@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 use tokio::sync::Semaphore;
+use tracing::{debug, instrument};
 
 use crate::action_ref::ActionRef;
 use crate::context::AuditContext;
@@ -21,6 +22,7 @@ impl Pipeline {
         }
     }
 
+    #[instrument(skip(self, actions), fields(action_count = actions.len(), stage_count = self.stages.len()))]
     pub async fn run(&self, actions: Vec<ActionRef>) -> Vec<ActionEntry> {
         let sem = Arc::new(Semaphore::new(self.max_concurrency));
         let stages = self.stages.clone();
@@ -33,6 +35,7 @@ impl Pipeline {
                 let stages = stages.clone();
                 async move {
                     let _permit = sem.acquire().await.expect("semaphore closed");
+                    debug!(action = %action.raw, "processing action");
 
                     let mut ctx = AuditContext {
                         action,
@@ -59,6 +62,8 @@ impl Pipeline {
                                 stage: stage.name().to_string(),
                                 message: e.to_string(),
                             });
+                        } else {
+                            debug!(stage = stage.name(), action = %ctx.action.raw, "stage complete");
                         }
                     }
 

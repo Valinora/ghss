@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tracing::warn;
+use tracing::{instrument, warn};
 
 use crate::context::{AuditContext, StageError};
 use crate::github::GitHubClient;
@@ -17,6 +17,7 @@ impl RefResolveStage {
 
 #[async_trait]
 impl Stage for RefResolveStage {
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         match self.client.resolve_ref(&ctx.action).await {
             Ok(sha) => ctx.resolved_ref = Some(sha),

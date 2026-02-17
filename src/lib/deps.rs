@@ -36,7 +36,9 @@ pub async fn fetch_npm_packages(
             )
         })?;
 
-    parse_npm_dependencies(&content)
+    let deps = parse_npm_dependencies(&content)?;
+    tracing::debug!(count = deps.len(), "found npm dependencies");
+    Ok(deps)
 }
 
 fn parse_npm_dependencies(content: &str) -> Result<Vec<(String, String)>> {

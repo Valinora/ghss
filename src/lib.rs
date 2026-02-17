@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::bail;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use action_ref::ActionRef;
 use github::GitHubClient;
@@ -159,6 +159,7 @@ pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
         })
         .collect();
 
+    debug!(count = unique.len(), "parsed unique third-party actions");
     Ok(unique.into_iter().collect())
 }
 
@@ -211,6 +212,7 @@ impl Auditor {
     }
 
     pub async fn audit(&self, actions: Vec<ActionRef>) -> Vec<output::ActionEntry> {
+        info!(action_count = actions.len(), "starting audit");
         let has_any_scan = !matches!(self.options.scan, ScanSelection::None);
         let has_token = self.client.has_token();
         if has_any_scan && !has_token {

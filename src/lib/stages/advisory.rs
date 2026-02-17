@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::future::join_all;
-use tracing::warn;
+use tracing::{debug, instrument, warn};
 
 use crate::advisory::deduplicate_advisories;
 use crate::context::{AuditContext, StageError};
@@ -21,6 +21,7 @@ impl AdvisoryStage {
 
 #[async_trait]
 impl Stage for AdvisoryStage {
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let results = join_all(self.providers.iter().map(|p| {
             let p = p.clone();
@@ -43,6 +44,7 @@ impl Stage for AdvisoryStage {
             }
         }
         ctx.advisories = deduplicate_advisories(advisories);
+        debug!(action = %ctx.action.raw, count = ctx.advisories.len(), "advisories collected");
         Ok(())
     }
 

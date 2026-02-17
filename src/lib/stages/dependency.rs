@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::future::join_all;
-use tracing::warn;
+use tracing::{debug, instrument, warn};
 
 use crate::advisory::deduplicate_advisories;
 use crate::context::{AuditContext, StageError};
@@ -25,6 +25,7 @@ impl DependencyStage {
 
 #[async_trait]
 impl Stage for DependencyStage {
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let ecosystems = ctx
             .scan
@@ -46,6 +47,7 @@ impl Stage for DependencyStage {
         };
 
         if packages.is_empty() {
+            debug!(action = %ctx.action.raw, "no ecosystems to scan for dependencies");
             return Ok(());
         }
 

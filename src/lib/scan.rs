@@ -108,6 +108,7 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
 }
 
 /// Scan an action's repository to detect languages and package ecosystems.
+#[tracing::instrument(skip(client), fields(action = %action.raw))]
 pub async fn scan_action(
     action: &ActionRef,
     client: &GitHubClient,
