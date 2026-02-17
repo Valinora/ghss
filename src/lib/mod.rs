@@ -5,5 +5,6 @@ pub mod ghsa;
 pub mod github;
 pub mod osv;
 pub mod output;
+pub mod providers;
 pub mod scan;
 pub mod workflow;
