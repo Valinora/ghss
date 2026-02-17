@@ -31,6 +31,7 @@ struct AuditContext {
     action: ActionRef,
     depth: usize,
     parent: Option<String>,          // "owner/repo@ref" of parent node
+    index: Option<usize>,            // 0-based position in the current frontier (for selective scan)
 
     // Populated by expansion stages (discovered children to traverse)
     children: Vec<ActionRef>,
@@ -157,7 +158,7 @@ let pipeline = Pipeline::builder()
 
 The CLI maps flags to builder calls:
 
-- `--resolve-refs` → adds `RefResolveStage`
+- `--no-resolve-refs` → omits `RefResolveStage` (ref resolution is on by default)
 - `--scan` → adds `ScanStage` and `DependencyStage`
 - `--provider <name>` → controls which providers are injected into `AdvisoryStage`
 - Expansion stages are always included (graph walking is a core feature, not optional)
