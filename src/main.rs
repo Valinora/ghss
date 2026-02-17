@@ -24,9 +24,9 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
-    /// Scan action repositories for languages and ecosystems
+    /// Scan action repositories for languages and ecosystems (all, or 1-indexed ranges like 1-3,5)
     #[arg(long)]
-    scan: bool,
+    scan: Option<ghss::ScanSelection>,
 
     /// GitHub personal access token (or set GITHUB_TOKEN env var)
     #[arg(long, env = "GITHUB_TOKEN")]
@@ -68,7 +68,7 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     let actions = ghss::parse_actions(&args.file)?;
     let client = GitHubClient::new(args.github_token.clone());
     let options = ghss::AuditOptions {
-        scan: args.scan,
+        scan: args.scan.clone().unwrap_or(ghss::ScanSelection::None),
         ..ghss::AuditOptions::default()
     };
     let auditor = ghss::Auditor::new(&args.provider, client, options)?;
