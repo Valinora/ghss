@@ -7,4 +7,5 @@ pub mod output;
 pub mod providers;
 pub mod scan;
 pub mod stage;
+pub mod stages;
 pub mod workflow;

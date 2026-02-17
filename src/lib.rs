@@ -10,6 +10,7 @@ pub use modules::output;
 pub use modules::providers;
 pub use modules::scan;
 pub use modules::stage;
+pub use modules::stages;
 pub use modules::workflow;
 
 use std::collections::BTreeSet;
