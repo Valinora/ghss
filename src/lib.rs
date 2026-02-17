@@ -27,8 +27,8 @@ use action_ref::ActionRef;
 use github::GitHubClient;
 use pipeline::Pipeline;
 use providers::ghsa::GhsaProvider;
-use providers::osv::{OsvActionProvider, OsvClient};
-use providers::ActionAdvisoryProvider;
+use providers::osv::{OsvActionProvider, OsvClient, OsvPackageProvider};
+use providers::{ActionAdvisoryProvider, PackageAdvisoryProvider};
 use stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
 
 /// Specifies which actions to scan, by 1-indexed position.
@@ -177,9 +177,20 @@ fn create_providers(
     }
 }
 
+fn create_package_providers(
+    provider: &str,
+) -> anyhow::Result<Vec<Arc<dyn PackageAdvisoryProvider>>> {
+    match provider {
+        "ghsa" => Ok(vec![]),
+        "osv" | "all" => Ok(vec![Arc::new(OsvPackageProvider::new(OsvClient::new()))]),
+        other => bail!("unknown provider: {other} (valid: ghsa, osv, all)"),
+    }
+}
+
 pub struct Auditor {
     client: GitHubClient,
     providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
+    package_providers: Vec<Arc<dyn PackageAdvisoryProvider>>,
     options: AuditOptions,
 }
 
@@ -190,9 +201,11 @@ impl Auditor {
         options: AuditOptions,
     ) -> anyhow::Result<Self> {
         let providers = create_providers(provider, &client)?;
+        let package_providers = create_package_providers(provider)?;
         Ok(Self {
             client,
             providers,
+            package_providers,
             options,
         })
     }
@@ -221,7 +234,10 @@ impl Auditor {
         }
 
         if self.options.deps {
-            builder = builder.stage(DependencyStage::new(self.client.clone()));
+            builder = builder.stage(DependencyStage::new(
+                self.client.clone(),
+                self.package_providers.clone(),
+            ));
         }
 
         let pipeline = builder.build();

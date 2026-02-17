@@ -1,16 +1,10 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tokio::sync::Semaphore;
-use tracing::{instrument, warn};
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
 use crate::github::GitHubClient;
-use crate::providers::osv;
 use crate::scan::Ecosystem;
-
-const OSV_API_URL: &str = "https://api.osv.dev/v1/query";
-const DEP_QUERY_CONCURRENCY: usize = 5;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DependencyReport {
@@ -20,12 +14,14 @@ pub struct DependencyReport {
     pub advisories: Vec<Advisory>,
 }
 
-#[instrument(skip(client))]
-pub async fn scan_dependencies(
+/// Fetch and parse npm dependencies from an action's package.json.
+///
+/// Returns an empty Vec if the action's ecosystems don't include npm.
+pub async fn fetch_npm_packages(
     action: &ActionRef,
     ecosystems: &[Ecosystem],
     client: &GitHubClient,
-) -> Result<Vec<DependencyReport>> {
+) -> Result<Vec<(String, String)>> {
     if !ecosystems.contains(&Ecosystem::Npm) {
         return Ok(vec![]);
     }
@@ -40,40 +36,7 @@ pub async fn scan_dependencies(
             )
         })?;
 
-    let deps = parse_npm_dependencies(&content)?;
-    if deps.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let http = reqwest::Client::new();
-    let sem = Semaphore::new(DEP_QUERY_CONCURRENCY);
-
-    let futures: Vec<_> = deps
-        .into_iter()
-        .map(|(name, version)| {
-            let http = http.clone();
-            let sem = &sem;
-            async move {
-                let _permit = sem.acquire().await.expect("semaphore closed");
-                match query_osv_npm(&http, &name).await {
-                    Ok(advisories) if !advisories.is_empty() => Some(DependencyReport {
-                        package: name,
-                        version,
-                        ecosystem: Ecosystem::Npm,
-                        advisories,
-                    }),
-                    Ok(_) => None,
-                    Err(e) => {
-                        warn!(package = %name, error = %e, "failed to query OSV for npm package");
-                        None
-                    }
-                }
-            }
-        })
-        .collect();
-
-    let results = futures::future::join_all(futures).await;
-    Ok(results.into_iter().flatten().collect())
+    parse_npm_dependencies(&content)
 }
 
 fn parse_npm_dependencies(content: &str) -> Result<Vec<(String, String)>> {
@@ -92,34 +55,6 @@ fn parse_npm_dependencies(content: &str) -> Result<Vec<(String, String)>> {
                 .map(|v| (name.clone(), v.to_string()))
         })
         .collect())
-}
-
-async fn query_osv_npm(client: &reqwest::Client, package_name: &str) -> Result<Vec<Advisory>> {
-    let body = serde_json::json!({
-        "package": {
-            "name": package_name,
-            "ecosystem": "npm"
-        }
-    });
-
-    let response = client
-        .post(OSV_API_URL)
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("failed to query OSV for npm package {package_name}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        anyhow::bail!("OSV API returned HTTP {status} for npm package {package_name}");
-    }
-
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .context("failed to parse OSV response")?;
-
-    osv::parse_osv_response(json)
 }
 
 #[cfg(test)]
@@ -187,13 +122,13 @@ mod tests {
     }
 
     #[test]
-    fn scan_dependencies_skips_non_npm() {
+    fn fetch_npm_packages_skips_non_npm() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let action: ActionRef = "actions/checkout@v4".parse().unwrap();
             let client = GitHubClient::new(None);
             let result =
-                scan_dependencies(&action, &[Ecosystem::Cargo, Ecosystem::Go], &client).await;
+                fetch_npm_packages(&action, &[Ecosystem::Cargo, Ecosystem::Go], &client).await;
             assert!(result.unwrap().is_empty());
         });
     }
