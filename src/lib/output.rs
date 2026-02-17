@@ -3,8 +3,8 @@ use serde::Serialize;
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
 use crate::context::AuditContext;
-use crate::deps::DependencyReport;
-use crate::scan::ScanResult;
+use crate::stages::dependency::DependencyReport;
+use crate::stages::ScanResult;
 
 #[derive(Serialize)]
 pub struct ActionEntry {
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn json_output_includes_scan_when_present() {
-        use crate::scan::{ScanResult, Ecosystem};
+        use crate::stages::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: None,
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn audit_context_converts_to_action_entry() {
         use crate::context::AuditContext;
-        use crate::scan::{ScanResult, Ecosystem};
+        use crate::stages::{ScanResult, Ecosystem};
 
         let ctx = AuditContext {
             action: sample_action(),
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn text_output_with_scan_data() {
-        use crate::scan::{ScanResult, Ecosystem};
+        use crate::stages::{ScanResult, Ecosystem};
         let entries = vec![ActionEntry {
             action: sample_action(),
             resolved_sha: Some("abc123".to_string()),

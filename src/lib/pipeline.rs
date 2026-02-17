@@ -7,7 +7,7 @@ use tracing::{debug, instrument};
 use crate::action_ref::ActionRef;
 use crate::context::AuditContext;
 use crate::output::ActionEntry;
-use crate::stage::Stage;
+use crate::stages::Stage;
 
 pub struct Pipeline {
     stages: Arc<Vec<Box<dyn Stage>>>,
@@ -15,13 +15,6 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn builder() -> PipelineBuilder {
-        PipelineBuilder {
-            stages: vec![],
-            max_concurrency: 10,
-        }
-    }
-
     #[instrument(skip(self, actions), fields(action_count = actions.len(), stage_count = self.stages.len()))]
     pub async fn run(&self, actions: Vec<ActionRef>) -> Vec<ActionEntry> {
         let sem = Arc::new(Semaphore::new(self.max_concurrency));
@@ -86,6 +79,13 @@ pub struct PipelineBuilder {
 }
 
 impl PipelineBuilder {
+    pub fn new() -> Self {
+        Self {
+            stages: vec![],
+            max_concurrency: 10,
+        }
+    }
+
     pub fn stage(mut self, stage: impl Stage + 'static) -> Self {
         self.stages.push(Box::new(stage));
         self
@@ -123,14 +123,14 @@ mod tests {
 
     #[test]
     fn builder_defaults() {
-        let pipeline = Pipeline::builder().build();
+        let pipeline = PipelineBuilder::new().build();
         assert_eq!(pipeline.stage_count(), 0);
         assert_eq!(pipeline.max_concurrency, 10);
     }
 
     #[test]
     fn builder_stage_count() {
-        let pipeline = Pipeline::builder()
+        let pipeline = PipelineBuilder::new()
             .stage(NoOpStage("a"))
             .stage(NoOpStage("b"))
             .stage(NoOpStage("c"))
@@ -140,13 +140,13 @@ mod tests {
 
     #[test]
     fn builder_max_concurrency() {
-        let pipeline = Pipeline::builder().max_concurrency(5).build();
+        let pipeline = PipelineBuilder::new().max_concurrency(5).build();
         assert_eq!(pipeline.max_concurrency, 5);
     }
 
     #[test]
     fn builder_stage_ordering() {
-        let pipeline = Pipeline::builder()
+        let pipeline = PipelineBuilder::new()
             .stage(NoOpStage("first"))
             .stage(NoOpStage("second"))
             .stage(NoOpStage("third"))
@@ -158,7 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_empty_actions() {
-        let pipeline = Pipeline::builder()
+        let pipeline = PipelineBuilder::new()
             .stage(NoOpStage("test"))
             .build();
         let results = pipeline.run(vec![]).await;
@@ -167,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_processes_all_actions() {
-        let pipeline = Pipeline::builder().build();
+        let pipeline = PipelineBuilder::new().build();
         let actions = vec![
             "actions/checkout@v4".parse().unwrap(),
             "actions/setup-node@v3".parse().unwrap(),

@@ -7,7 +7,7 @@ use tracing::{debug, instrument, warn};
 use crate::advisory::deduplicate_advisories;
 use crate::context::{AuditContext, StageError};
 use crate::providers::ActionAdvisoryProvider;
-use crate::stage::Stage;
+use super::Stage;
 
 pub struct AdvisoryStage {
     providers: Vec<Arc<dyn ActionAdvisoryProvider>>,

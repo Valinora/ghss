@@ -1,23 +1,13 @@
 use anyhow::{Context, Result};
-use serde::Serialize;
 
 use crate::action_ref::ActionRef;
-use crate::advisory::Advisory;
 use crate::github::GitHubClient;
-use crate::scan::Ecosystem;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DependencyReport {
-    pub package: String,
-    pub version: String,
-    pub ecosystem: Ecosystem,
-    pub advisories: Vec<Advisory>,
-}
+use crate::stages::Ecosystem;
 
 /// Fetch and parse npm dependencies from an action's package.json.
 ///
 /// Returns an empty Vec if the action's ecosystems don't include npm.
-pub async fn fetch_npm_packages(
+pub(super) async fn fetch_npm_packages(
     action: &ActionRef,
     ecosystems: &[Ecosystem],
     client: &GitHubClient,

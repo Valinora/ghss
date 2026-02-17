@@ -3,7 +3,7 @@ use tracing::{instrument, warn};
 
 use crate::context::{AuditContext, StageError};
 use crate::github::GitHubClient;
-use crate::stage::Stage;
+use super::Stage;
 
 pub struct RefResolveStage {
     client: GitHubClient,

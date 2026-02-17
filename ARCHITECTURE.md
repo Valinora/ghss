@@ -146,7 +146,7 @@ Concrete stages:
 The `Pipeline` is constructed using a builder. The builder provides a fluent API for adding stages and validates the pipeline at build time.
 
 ```rust
-let pipeline = Pipeline::builder()
+let pipeline = PipelineBuilder::new()
     .stage(RefResolveStage::new(github.clone()))
     .stage(CompositeExpandStage::new(github.clone()))
     .stage(WorkflowExpandStage::new(github.clone()))

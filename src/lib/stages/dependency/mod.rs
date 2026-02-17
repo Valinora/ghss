@@ -1,16 +1,26 @@
+mod npm;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::future::join_all;
+use serde::Serialize;
 use tracing::{debug, instrument, warn};
 
-use crate::advisory::deduplicate_advisories;
+use crate::advisory::{deduplicate_advisories, Advisory};
 use crate::context::{AuditContext, StageError};
-use crate::deps::{self, DependencyReport};
 use crate::github::GitHubClient;
 use crate::providers::PackageAdvisoryProvider;
-use crate::scan::Ecosystem;
-use crate::stage::Stage;
+use super::Ecosystem;
+use super::Stage;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DependencyReport {
+    pub package: String,
+    pub version: String,
+    pub ecosystem: Ecosystem,
+    pub advisories: Vec<Advisory>,
+}
 
 pub struct DependencyStage {
     client: GitHubClient,
@@ -33,18 +43,18 @@ impl Stage for DependencyStage {
             .map(|s| s.ecosystems.as_slice())
             .unwrap_or(&[]);
 
-        let packages = match deps::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await
-        {
-            Ok(pkgs) => pkgs,
-            Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to fetch dependencies");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
-                return Ok(());
-            }
-        };
+        let packages =
+            match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
+                Ok(pkgs) => pkgs,
+                Err(e) => {
+                    warn!(action = %ctx.action.raw, error = %e, "failed to fetch dependencies");
+                    ctx.errors.push(StageError {
+                        stage: self.name().to_string(),
+                        message: e.to_string(),
+                    });
+                    return Ok(());
+                }
+            };
 
         if packages.is_empty() {
             debug!(action = %ctx.action.raw, "no ecosystems to scan for dependencies");

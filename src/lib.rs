@@ -4,13 +4,10 @@ mod modules;
 pub use modules::action_ref;
 pub use modules::advisory;
 pub use modules::context;
-pub use modules::deps;
 pub use modules::github;
 pub use modules::output;
 pub use modules::pipeline;
 pub use modules::providers;
-pub use modules::scan;
-pub use modules::stage;
 pub use modules::stages;
 pub use modules::workflow;
 
@@ -25,7 +22,7 @@ use tracing::{debug, info, warn};
 
 use action_ref::ActionRef;
 use github::GitHubClient;
-use pipeline::Pipeline;
+use pipeline::PipelineBuilder;
 use providers::ghsa::GhsaProvider;
 use providers::osv::{OsvActionProvider, OsvClient, OsvPackageProvider};
 use providers::{ActionAdvisoryProvider, PackageAdvisoryProvider};
@@ -219,7 +216,7 @@ impl Auditor {
             warn!("scan enabled but no GitHub token provided; skipping scan");
         }
 
-        let mut builder = Pipeline::builder()
+        let mut builder = PipelineBuilder::new()
             .max_concurrency(self.options.max_concurrency);
 
         if self.options.resolve_refs {
