@@ -6,6 +6,8 @@ use tracing::instrument;
 use crate::action_ref::ActionRef;
 use crate::advisory::{Advisory, AdvisoryProvider};
 
+use super::{ActionAdvisoryProvider, PackageAdvisoryProvider};
+
 const OSV_API_URL: &str = "https://api.osv.dev/v1/query";
 
 #[derive(Deserialize)]
@@ -60,41 +62,42 @@ struct OsvDatabaseSpecific {
     severity: Option<String>,
 }
 
-pub struct OsvProvider {
-    client: reqwest::Client,
+// ---------------------------------------------------------------------------
+// Shared client — owns HTTP logic and response parsing
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct OsvClient {
+    http: reqwest::Client,
 }
 
-impl OsvProvider {
+impl OsvClient {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            http: reqwest::Client::new(),
         }
     }
-}
 
-#[async_trait]
-impl AdvisoryProvider for OsvProvider {
-    #[instrument(skip(self), fields(action = %action.raw))]
-    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
-        let package_name = action.package_name();
+    #[instrument(skip(self))]
+    pub async fn query(&self, package: &str, ecosystem: &str) -> Result<Vec<Advisory>> {
         let body = serde_json::json!({
             "package": {
-                "name": package_name,
-                "ecosystem": "GitHub Actions"
+                "name": package,
+                "ecosystem": ecosystem
             }
         });
 
         let response = self
-            .client
+            .http
             .post(OSV_API_URL)
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("failed to query OSV for {package_name}"))?;
+            .with_context(|| format!("failed to query OSV for {package}"))?;
 
         let status = response.status();
         if !status.is_success() {
-            bail!("OSV API returned HTTP {status} for {package_name}");
+            bail!("OSV API returned HTTP {status} for {package}");
         }
 
         let json: serde_json::Value = response
@@ -104,11 +107,91 @@ impl AdvisoryProvider for OsvProvider {
 
         parse_osv_response(json)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy provider — implements old AdvisoryProvider trait, delegates to OsvClient
+// ---------------------------------------------------------------------------
+
+pub struct OsvProvider {
+    client: OsvClient,
+}
+
+impl OsvProvider {
+    pub fn new() -> Self {
+        Self {
+            client: OsvClient::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl AdvisoryProvider for OsvProvider {
+    #[instrument(skip(self), fields(action = %action.raw))]
+    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
+        self.client
+            .query(&action.package_name(), "GitHub Actions")
+            .await
+    }
 
     fn name(&self) -> &str {
         "OSV"
     }
 }
+
+// ---------------------------------------------------------------------------
+// New providers — implement the split traits
+// ---------------------------------------------------------------------------
+
+pub struct OsvActionProvider {
+    client: OsvClient,
+}
+
+impl OsvActionProvider {
+    pub fn new(client: OsvClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl ActionAdvisoryProvider for OsvActionProvider {
+    #[instrument(skip(self), fields(action = %action.raw))]
+    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
+        self.client
+            .query(&action.package_name(), "GitHub Actions")
+            .await
+    }
+
+    fn name(&self) -> &str {
+        "OSV"
+    }
+}
+
+pub struct OsvPackageProvider {
+    client: OsvClient,
+}
+
+impl OsvPackageProvider {
+    pub fn new(client: OsvClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl PackageAdvisoryProvider for OsvPackageProvider {
+    #[instrument(skip(self))]
+    async fn query(&self, package: &str, ecosystem: &str) -> Result<Vec<Advisory>> {
+        self.client.query(package, ecosystem).await
+    }
+
+    fn name(&self) -> &str {
+        "OSV"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing (public — used by deps.rs)
+// ---------------------------------------------------------------------------
 
 pub fn parse_osv_response(json: serde_json::Value) -> Result<Vec<Advisory>> {
     let response: OsvResponse =

@@ -8,6 +8,8 @@ use crate::action_ref::ActionRef;
 use crate::advisory::{Advisory, AdvisoryProvider};
 use crate::github::{GitHubClient, GITHUB_API_BASE};
 
+use super::ActionAdvisoryProvider;
+
 #[derive(Deserialize)]
 struct GhsaAdvisoryResponse {
     ghsa_id: Option<String>,
@@ -35,6 +37,27 @@ impl GhsaProvider {
 
 #[async_trait]
 impl AdvisoryProvider for GhsaProvider {
+    #[instrument(skip(self), fields(action = %action.raw))]
+    async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
+        let package_name = action.package_name();
+        let json = self
+            .client
+            .api_get(&format!(
+                "{GITHUB_API_BASE}/advisories?ecosystem=actions&affects={package_name}"
+            ))
+            .await
+            .with_context(|| format!("failed to query advisories for {package_name}"))?;
+
+        parse_advisories(json)
+    }
+
+    fn name(&self) -> &str {
+        "GHSA"
+    }
+}
+
+#[async_trait]
+impl ActionAdvisoryProvider for GhsaProvider {
     #[instrument(skip(self), fields(action = %action.raw))]
     async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
