@@ -5,6 +5,7 @@ use tracing::{debug, instrument};
 use crate::context::AuditContext;
 use crate::stages::Stage;
 
+#[derive(Clone)]
 pub struct Pipeline {
     stages: Arc<Vec<Box<dyn Stage>>>,
     max_concurrency: usize,

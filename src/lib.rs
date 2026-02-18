@@ -10,6 +10,7 @@ pub use modules::output;
 pub use modules::pipeline;
 pub use modules::providers;
 pub use modules::stages;
+pub use modules::walker;
 pub use modules::workflow;
 
 use std::collections::BTreeSet;

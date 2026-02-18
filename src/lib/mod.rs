@@ -7,4 +7,5 @@ pub mod output;
 pub mod pipeline;
 pub mod providers;
 pub mod stages;
+pub mod walker;
 pub mod workflow;
