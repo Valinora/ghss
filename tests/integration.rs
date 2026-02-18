@@ -313,3 +313,69 @@ fn json_flag_produces_json_tracing_on_stderr() {
         );
     }
 }
+
+// ── Depth demo tests (require network + GITHUB_TOKEN) ──
+
+/// Requires network access and a GitHub token.
+/// Run with: cargo test --test integration -- --ignored depth_demo
+#[test]
+#[ignore]
+fn depth_demo_expands_composite_at_depth_1() {
+    let stdout = stdout_of(&[
+        "--file",
+        "tests/fixtures/depth-demo-workflow.yml",
+        "--depth",
+        "1",
+    ]);
+
+    // At depth 0 the composite action itself should appear
+    assert!(
+        stdout.contains("tj-actions/changed-files@v35"),
+        "should list the composite action itself"
+    );
+
+    // At depth 1 the composite's child actions should appear indented
+    assert!(
+        stdout.contains("tj-actions/glob"),
+        "should expand composite to reveal tj-actions/glob child action"
+    );
+}
+
+/// Requires network access and a GitHub token.
+/// Run with: cargo test --test integration -- --ignored depth_demo
+#[test]
+#[ignore]
+fn depth_demo_expands_reusable_workflow_at_depth_1() {
+    let stdout = stdout_of(&[
+        "--file",
+        "tests/fixtures/depth-demo-workflow.yml",
+        "--depth",
+        "1",
+    ]);
+
+    // The reusable workflow ref itself should appear
+    assert!(
+        stdout.contains("slsa-framework/slsa-github-generator"),
+        "should list the reusable workflow ref"
+    );
+
+    // At depth 1 the workflow's internal actions should appear as children.
+    // The SLSA generator workflow uses actions/checkout internally.
+    // Check for at least one child action from the expanded workflow.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let slsa_idx = lines.iter().position(|l| l.contains("slsa-framework/slsa-github-generator"));
+    assert!(
+        slsa_idx.is_some(),
+        "should find the slsa-framework ref in output"
+    );
+
+    // There should be indented children after the SLSA workflow ref
+    let after_slsa: Vec<&&str> = lines[slsa_idx.unwrap() + 1..]
+        .iter()
+        .take_while(|l| l.starts_with("  "))
+        .collect();
+    assert!(
+        !after_slsa.is_empty(),
+        "reusable workflow should have indented child actions at depth 1"
+    );
+}
