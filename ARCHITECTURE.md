@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the target architecture for `ghss`. It is forward-looking and prescriptive — it defines what we are building toward, not the current state of the codebase.
+This document describes the architecture of `ghss` as currently implemented.
 
 ## Goals
 
@@ -31,7 +31,6 @@ struct AuditContext {
     action: ActionRef,
     depth: usize,
     parent: Option<String>,          // "owner/repo@ref" of parent node
-    index: Option<usize>,            // 0-based position in the current frontier (for selective scan)
 
     // Populated by expansion stages (discovered children to traverse)
     children: Vec<ActionRef>,
@@ -41,7 +40,9 @@ struct AuditContext {
     advisories: Vec<Advisory>,
     scan: Option<ScanResult>,
     dependencies: Vec<DependencyReport>,
-    // Future: license_info, static_analysis_findings, etc.
+
+    // Populated by pipeline on stage failure
+    errors: Vec<StageError>,
 }
 ```
 
@@ -134,12 +135,12 @@ Concrete stages:
 
 | Stage                  | Type        | Depends On | Description                                                   |
 |------------------------|-------------|------------|---------------------------------------------------------------|
-| `RefResolveStage`      | Enrichment  | —          | Resolves tag/branch refs to commit SHAs via GitHub API        |
 | `CompositeExpandStage` | Expansion   | —          | Fetches `action.yml`, parses `uses:`, populates `children`    |
 | `WorkflowExpandStage`  | Expansion   | —          | Fetches reusable workflow YAML, parses `uses:`, populates `children` |
+| `RefResolveStage`      | Enrichment  | —          | Resolves tag/branch refs to commit SHAs via GitHub API        |
 | `AdvisoryStage`        | Enrichment  | —          | Queries action-level advisory providers                       |
-| `ScanStage`            | Enrichment  | —          | Detects primary language and ecosystems via GitHub API         |
-| `DependencyStage`      | Enrichment  | `ScanStage`| Queries package-level advisory providers for detected ecosystems |
+| `ScanStage`            | Enrichment  | —          | Detects primary language and ecosystems via GitHub API (conditional) |
+| `DependencyStage`      | Enrichment  | `ScanStage`| Queries package-level advisory providers for detected ecosystems (conditional) |
 
 ### Builder Pattern — Pipeline Construction
 
@@ -147,10 +148,11 @@ The `Pipeline` is constructed using a builder. The builder provides a fluent API
 
 ```rust
 let pipeline = PipelineBuilder::new()
-    .stage(RefResolveStage::new(github.clone()))
     .stage(CompositeExpandStage::new(github.clone()))
     .stage(WorkflowExpandStage::new(github.clone()))
+    .stage(RefResolveStage::new(github.clone()))
     .stage(AdvisoryStage::new(advisory_providers))
+    // Conditional — only when --deps is passed:
     .stage(ScanStage::new(github.clone()))
     .stage(DependencyStage::new(package_providers))
     .build();
@@ -158,12 +160,11 @@ let pipeline = PipelineBuilder::new()
 
 The CLI maps flags to builder calls:
 
-- `--no-resolve-refs` → omits `RefResolveStage` (ref resolution is on by default)
-- `--scan` → adds `ScanStage` and `DependencyStage`
+- `--deps` → adds `ScanStage` and `DependencyStage`
 - `--provider <name>` → controls which providers are injected into `AdvisoryStage`
-- Expansion stages are always included (graph walking is a core feature, not optional)
+- Expansion stages and `RefResolveStage` are always included
 
-A no-flag invocation produces a minimal pipeline: expansion stages + advisory stage only.
+A no-flag invocation produces: expansion stages + ref resolution + advisory stage.
 
 ### Crawler Pattern — Walker
 
@@ -172,10 +173,12 @@ The `Walker` performs breadth-first traversal of the action dependency graph. It
 ```rust
 struct Walker {
     pipeline: Pipeline,
-    visited: HashSet<String>,
     max_depth: Option<usize>,
+    max_concurrency: usize,
 }
 ```
+
+The visited set (`HashSet<String>`) is local to the `walk()` method, not a struct field.
 
 Algorithm:
 
@@ -196,44 +199,30 @@ The walker produces a tree of `AuditNode`s, preserving the dependency structure 
 
 ```rust
 struct AuditNode {
-    context: AuditContext,
+    entry: ActionEntry,
     children: Vec<AuditNode>,
 }
 ```
+
+`ActionEntry` is a presentation-oriented subset of `AuditContext`, containing the `ActionRef`, resolved SHA, advisories, scan results, and dependency reports. The walker converts each completed `AuditContext` into an `ActionEntry` when building the result tree.
 
 Output formatters (text, JSON) receive the tree and render it with depth information, so users can see provenance: "your workflow uses X, which uses Y, which has advisory Z."
 
 ## Concurrency Model
 
-- **Cross-node**: Multiple independent nodes at the same depth level can be processed concurrently. The walker can process the current frontier in parallel (bounded by `max_concurrency`).
+- **Cross-node**: Multiple independent nodes at the same depth level are processed concurrently. The walker processes the current frontier in parallel (bounded by a `tokio::sync::Semaphore` with `max_concurrency` permits, default 10).
 - **Within-node**: Stages run sequentially for a given node (they may depend on each other's output).
 - **Within-stage**: A stage may internally parallelize work (e.g., `AdvisoryStage` queries multiple providers concurrently via `join_all`).
 
 ## Error Handling
 
-Stages use `anyhow::Result`. A stage failure for one node does not halt traversal — the walker logs the error, attaches it to the `AuditContext`, and continues processing other nodes. This matches the current behavior where malformed jobs produce warnings but don't fail the parse.
+Stages use `anyhow::Result`. A stage failure for one node does not halt traversal — the pipeline captures the error in `ctx.errors` and continues to the next stage. Malformed jobs in workflow YAML produce warnings but don't fail the parse.
 
-The `AuditContext` carries an errors field:
+`StageError` captures the stage name and error message:
 
 ```rust
-struct AuditContext {
-    // ...
-    errors: Vec<StageError>,
-}
-
 struct StageError {
     stage: String,
     message: String,
 }
 ```
-
-## Iterative Migration Path
-
-This architecture will be implemented incrementally. Each step should leave the tool functional:
-
-1. **Reorganize providers.** Move `ghsa.rs` and `osv.rs` into `providers/` module. Extract `AdvisoryProvider` trait into `providers/mod.rs`. Split into `ActionAdvisoryProvider` and `PackageAdvisoryProvider`.
-2. **Introduce `AuditContext`.** Replace the ad-hoc enrichment in `Auditor::audit_one()` with a context object that accumulates results.
-3. **Introduce the `Stage` trait and built-in stages.** Extract each block of logic in `audit_one()` into its own `Stage` implementation.
-4. **Introduce `Pipeline` with builder.** Replace `Auditor` with `Pipeline` constructed via builder. CLI maps flags to builder calls.
-5. **Introduce the `Walker`.** Add expansion stages and BFS traversal. Output becomes a tree.
-6. **Update output formatters.** Adapt text and JSON output to render the tree structure with depth and provenance.
