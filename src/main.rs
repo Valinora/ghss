@@ -7,7 +7,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use ghss::context::AuditContext;
 use ghss::github::GitHubClient;
-use ghss::output::{self, ActionEntry};
+use ghss::output::{self, ActionEntry, AuditNode};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
 use ghss::stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
@@ -120,9 +120,17 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         entries.push(ActionEntry::from(ctx));
     }
 
+    let nodes: Vec<AuditNode> = entries
+        .into_iter()
+        .map(|e| AuditNode {
+            entry: e,
+            children: vec![],
+        })
+        .collect();
+
     let formatter = output::formatter(args.json);
     formatter
-        .write_results(&entries, &mut std::io::stdout().lock())
+        .write_results(&nodes, &mut std::io::stdout().lock())
         .expect("failed to write output");
 
     Ok(())
