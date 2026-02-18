@@ -13,6 +13,8 @@ struct Workflow {
 #[derive(Debug, Deserialize)]
 struct Job {
     #[serde(default)]
+    uses: Option<String>,
+    #[serde(default)]
     steps: Option<Vec<Step>>,
 }
 
@@ -31,6 +33,9 @@ pub fn parse_workflow(path: &Path) -> anyhow::Result<Vec<String>> {
     for (job_name, job_value) in workflow.jobs {
         match serde_yaml::from_value::<Job>(job_value) {
             Ok(job) => {
+                if let Some(uses) = job.uses {
+                    uses_refs.push(uses);
+                }
                 if let Some(steps) = job.steps {
                     for step in steps {
                         if let Some(uses) = step.uses {
@@ -94,5 +99,22 @@ mod tests {
     fn parse_nonexistent_file_returns_error() {
         let result = parse_workflow(Path::new("nonexistent.yml"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_reusable_workflow_extracts_step_and_job_level_uses() {
+        let refs = parse_workflow(&fixture_path("reusable-workflow.yml")).unwrap();
+        // Step-level uses
+        assert!(refs.contains(&"actions/checkout@v4".to_string()));
+        assert!(refs.contains(&"actions/setup-node@v4".to_string()));
+        // Job-level reusable workflow calls
+        assert!(refs.contains(
+            &"org/shared-workflows/.github/workflows/ci.yml@main".to_string()
+        ));
+        assert!(refs.contains(
+            &"org/shared-workflows/.github/workflows/deploy.yml@v1".to_string()
+        ));
+        // Total: 2 step-level + 2 job-level = 4
+        assert_eq!(refs.len(), 4);
     }
 }
