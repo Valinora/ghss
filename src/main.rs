@@ -11,8 +11,7 @@ use ghss::output::{self, AuditNode};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
 use ghss::stages::{
-    AdvisoryStage, CompositeExpandStage, DependencyStage, RefResolveStage, ScanStage,
-    WorkflowExpandStage,
+    AdvisoryStage, CompositeExpandStage, DependencyStage, RefResolveStage, ScanStage, WorkflowExpandStage,
 };
 use ghss::walker::Walker;
 
@@ -36,11 +35,11 @@ struct Cli {
     #[arg(long, default_value = "0")]
     depth: DepthLimit,
 
-    /// Scan action repositories for languages and ecosystems (all, or 1-indexed ranges like 1-3,5)
+    /// Select which root actions to audit (all, or 1-indexed ranges like 1-3,5)
     #[arg(long)]
-    scan: Option<ghss::ScanSelection>,
+    select: Option<ghss::ActionSelection>,
 
-    /// Scan npm dependencies for known vulnerabilities (auto-enables --scan all)
+    /// Scan action ecosystems and npm dependencies for known vulnerabilities
     #[arg(long)]
     deps: bool,
 
@@ -84,26 +83,18 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     let actions = ghss::parse_actions(&args.file)?;
     let client = GitHubClient::new(args.github_token.clone());
 
-    // When depth > 0 and scan is provided, force ScanSelection::All
-    let is_recursive = !matches!(args.depth, DepthLimit::Bounded(0));
-    let scan = match (&args.scan, args.deps) {
-        (Some(sel), _) if is_recursive => {
-            if matches!(sel, ghss::ScanSelection::None) {
-                sel.clone()
-            } else {
-                ghss::ScanSelection::All
-            }
-        }
-        (Some(sel), _) => sel.clone(),
-        (None, true) => ghss::ScanSelection::All,
-        (None, false) => ghss::ScanSelection::None,
+    // Filter root actions by --select
+    let actions = match &args.select {
+        Some(sel) => actions
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| sel.includes(*i))
+            .map(|(_, a)| a)
+            .collect(),
+        None => actions,
     };
-    let has_any_scan = !matches!(scan, ghss::ScanSelection::None);
-    let has_token = client.has_token();
-    if has_any_scan && !has_token {
-        tracing::warn!("scan enabled but no GitHub token provided; skipping scan");
-    }
 
+    let has_token = client.has_token();
     let action_providers = providers::create_action_providers(&args.provider, &client)?;
     let package_providers = providers::create_package_providers(&args.provider)?;
 
@@ -113,11 +104,16 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         .stage(RefResolveStage::new(client.clone()))
         .stage(AdvisoryStage::new(action_providers));
 
-    if has_any_scan && has_token {
-        builder = builder.stage(ScanStage::new(client.clone(), scan));
-    }
     if args.deps {
-        builder = builder.stage(DependencyStage::new(client.clone(), package_providers));
+        if has_token {
+            builder = builder
+                .stage(ScanStage::new(client.clone()))
+                .stage(DependencyStage::new(client.clone(), package_providers));
+        } else {
+            tracing::warn!(
+                "--deps requires a GitHub token; skipping ecosystem scan and dependency audit"
+            );
+        }
     }
 
     let pipeline = builder.build();

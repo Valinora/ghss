@@ -4,12 +4,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
-use tracing::{debug, instrument, warn};
+use tracing::{instrument, warn};
 
 use crate::action_ref::ActionRef;
 use crate::context::{AuditContext, StageError};
 use crate::github::GitHubClient;
-use crate::ScanSelection;
 use super::Stage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -133,12 +132,11 @@ pub async fn scan_action(
 
 pub struct ScanStage {
     client: GitHubClient,
-    selection: ScanSelection,
 }
 
 impl ScanStage {
-    pub fn new(client: GitHubClient, selection: ScanSelection) -> Self {
-        Self { client, selection }
+    pub fn new(client: GitHubClient) -> Self {
+        Self { client }
     }
 }
 
@@ -146,16 +144,6 @@ impl ScanStage {
 impl Stage for ScanStage {
     #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
-        let should_scan = match ctx.index {
-            Some(idx) => self.selection.should_scan(idx),
-            None => matches!(self.selection, ScanSelection::All),
-        };
-
-        if !should_scan {
-            debug!(action = %ctx.action.raw, "scan skipped");
-            return Ok(());
-        }
-
         match scan_action(&ctx.action, &self.client).await {
             Ok(s) => ctx.scan = Some(s),
             Err(e) => {

@@ -28,7 +28,7 @@ The crate is organized as `src/lib.rs` (top-level types and orchestration) with 
 ### Source layout
 
 ```
-src/lib.rs          — ScanSelection enum, parse_actions(), module re-exports
+src/lib.rs          — ActionSelection enum, parse_actions(), module re-exports
 src/main.rs         — CLI (Clap), pipeline assembly, Walker execution
 src/lib/
   mod.rs            — Module declarations and re-exports
@@ -59,9 +59,9 @@ src/lib/
 
 ### Module descriptions
 
-- **`lib.rs`** — Top-level public API. Exports `ScanSelection` enum (None, All, or 1-indexed ranges like `"1-3,5"`), `parse_actions()` free function, and module re-exports from `src/lib/mod.rs`.
+- **`lib.rs`** — Top-level public API. Exports `ActionSelection` enum (All, or 1-indexed ranges like `"1-3,5"`), `parse_actions()` free function, and module re-exports from `src/lib/mod.rs`.
 - **`main.rs`** — Clap-derived CLI struct and orchestration. Parses args, assembles the pipeline via `PipelineBuilder`, creates a `Walker`, and runs BFS traversal. See CLI flags below.
-- **`context.rs`** — `AuditContext` struct: the per-action data carrier passed through all pipeline stages. Fields: `action`, `depth`, `parent`, `children`, `index`, `resolved_ref`, `advisories`, `scan`, `dependencies`, `errors`. Also defines `StageError`.
+- **`context.rs`** — `AuditContext` struct: the per-action data carrier passed through all pipeline stages. Fields: `action`, `depth`, `parent`, `children`, `resolved_ref`, `advisories`, `scan`, `dependencies`, `errors`. Also defines `StageError`.
 - **`depth.rs`** — `DepthLimit` enum: `Bounded(usize)` or `Unlimited`. Parsed from CLI `--depth` flag. Converts to `Option<usize>` for Walker.
 - **`pipeline.rs`** — `Stage` async trait (`run` + `name`), `Pipeline` (holds `Arc<Vec<Box<dyn Stage>>>`), and `PipelineBuilder` (fluent builder with `.stage()` and `.max_concurrency()`). Stages execute sequentially; errors are captured in `ctx.errors` without halting.
 - **`walker.rs`** — `Walker` struct: BFS traversal engine. Processes each depth frontier concurrently (bounded by `tokio::sync::Semaphore`), runs the pipeline on each node, discovers children from expansion stages, enforces `max_depth`, detects cycles via visited set, and builds an `AuditNode` tree.
@@ -85,7 +85,7 @@ Stages implement the `Stage` trait and execute in this order within the pipeline
 2. **`WorkflowExpandStage`** (`workflow_expand.rs`) — Detects reusable workflows (path contains `.github/workflows/`), fetches workflow YAML, extracts step-level and job-level `uses:` refs, adds to `ctx.children`.
 3. **`RefResolveStage`** (`resolve.rs`) — Resolves tag/branch refs to commit SHAs via GitHub API. SHA refs bypass the API call. Stores result in `ctx.resolved_ref`.
 4. **`AdvisoryStage`** (`advisory.rs`) — Queries all configured advisory providers in parallel, merges and deduplicates results, stores in `ctx.advisories`.
-5. **`ScanStage`** (`scan.rs`, conditional) — Queries GitHub GraphQL for repository languages and manifest file presence. Maps manifests to `Ecosystem` enum (Npm, Cargo, Go, Pip, Maven, Gradle, RubyGems, Composer, Docker). Stores `ScanResult` in `ctx.scan`. Respects `ScanSelection`.
+5. **`ScanStage`** (`scan.rs`, conditional) — Queries GitHub GraphQL for repository languages and manifest file presence. Maps manifests to `Ecosystem` enum (Npm, Cargo, Go, Pip, Maven, Gradle, RubyGems, Composer, Docker). Stores `ScanResult` in `ctx.scan`.
 6. **`DependencyStage`** (`dependency/mod.rs`, conditional) — Requires prior scan results. For npm ecosystems, fetches `package.json` via `npm.rs`, queries `PackageAdvisoryProvider`s for each dependency, stores `Vec<DependencyReport>` in `ctx.dependencies`.
 
 ### CLI flags
@@ -96,18 +96,18 @@ Stages implement the `Stage` trait and execute in this order within the pipeline
 | `--provider` | `String` | `"all"` | Advisory provider: `ghsa`, `osv`, or `all` |
 | `--json` | flag | `false` | Output results as JSON; logs to stderr as structured JSON |
 | `--depth` | `DepthLimit` | `0` | Recursive expansion depth (`0` = flat, integer, or `"unlimited"`) |
-| `--scan` | `Option<ScanSelection>` | `None` | Scan repos for languages/ecosystems (`all`, `none`, or ranges like `"1-3,5"`) |
-| `--deps` | flag | `false` | Scan npm dependencies for vulnerabilities (auto-enables `--scan all`) |
+| `--select` | `Option<ActionSelection>` | `None` | Select which root actions to audit (`all`, or 1-indexed ranges like `"1-3,5"`) |
+| `--deps` | flag | `false` | Scan action ecosystems and npm dependencies for known vulnerabilities |
 | `--github-token` | `Option<String>` | `GITHUB_TOKEN` env var | GitHub personal access token |
 | `-v` / `-vv` / `-q` | verbosity | WARN | Verbosity via `clap-verbosity-flag` (`-v` = info, `-vv` = debug, `-q` = error) |
 
-**Interaction rules:** When `--depth > 0` and `--scan` is provided (not `none`), scan is forced to `all`. When `--deps` is set without `--scan`, scan is auto-enabled as `all`. Scan/dependency stages require a GitHub token; a warning is logged if missing.
+**Interaction rules:** `--deps` adds `ScanStage` + `DependencyStage` to the pipeline; requires a GitHub token (warning logged if missing). `--select` filters root actions before the Walker; unselected actions never enter the pipeline.
 
 ### Execution flow
 
 1. Parse CLI args → validate input file exists
 2. Initialize tracing (logs to stderr; JSON format if `--json`)
-3. Parse workflow YAML → extract and deduplicate root `ActionRef`s
+3. Parse workflow YAML → extract and deduplicate root `ActionRef`s → filter by `--select`
 4. Create advisory providers based on `--provider`
 5. Assemble pipeline: expansion stages (always) → resolve → advisory → scan (conditional) → dependency (conditional)
 6. Create Walker with pipeline, `max_depth`, and concurrency limit

@@ -93,9 +93,7 @@ impl Walker {
             // We clone the pipeline (cheap — stages are Arc'd) and use tokio::spawn
             // so each task owns its data and satisfies 'static.
             let mut handles = Vec::new();
-            for (i, (action, depth, parent_key, key)) in
-                to_process.into_iter().enumerate()
-            {
+            for (action, depth, parent_key, key) in to_process {
                 let sem = Arc::clone(&semaphore);
                 let pipeline = self.pipeline.clone();
                 handles.push(tokio::spawn(async move {
@@ -107,7 +105,6 @@ impl Walker {
                         depth,
                         parent: parent_key,
                         children: vec![],
-                        index: Some(i),
                         resolved_ref: None,
                         advisories: vec![],
                         scan: None,

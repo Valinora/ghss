@@ -9,7 +9,6 @@ pub struct AuditContext {
     pub depth: usize,
     pub parent: Option<String>,
     pub children: Vec<ActionRef>,
-    pub index: Option<usize>,
     // Enrichment results
     pub resolved_ref: Option<String>,
     pub advisories: Vec<Advisory>,

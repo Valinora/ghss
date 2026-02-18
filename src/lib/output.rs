@@ -358,7 +358,6 @@ mod tests {
             depth: 0,
             parent: None,
             children: vec![],
-            index: Some(0),
             resolved_ref: Some("abc123".to_string()),
             advisories: vec![Advisory {
                 id: "GHSA-1234".to_string(),
@@ -417,7 +416,6 @@ mod tests {
             depth: 0,
             parent: None,
             children: vec![],
-            index: Some(0),
             resolved_ref: Some("abc123".to_string()),
             advisories: vec![Advisory {
                 id: "GHSA-5678".to_string(),

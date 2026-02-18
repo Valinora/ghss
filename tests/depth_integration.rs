@@ -434,7 +434,7 @@ async fn local_only_workflow_produces_empty_output() {
 }
 
 // ---------------------------------------------------------------------------
-// 2c: --scan flag tests
+// 2c: --select flag tests
 // ---------------------------------------------------------------------------
 
 /// Mock server extended with GraphQL response for scan queries.
@@ -482,7 +482,7 @@ async fn setup_scan_mock_server() -> MockServer {
 }
 
 #[tokio::test]
-async fn scan_all_shows_language_and_ecosystems() {
+async fn deps_shows_language_and_ecosystems() {
     let server = setup_scan_mock_server().await;
     let stdout = stdout_of_mock_with_token(
         &server,
@@ -491,8 +491,7 @@ async fn scan_all_shows_language_and_ecosystems() {
             "tests/fixtures/depth-test-workflow.yml",
             "--provider",
             "ghsa",
-            "--scan",
-            "all",
+            "--deps",
         ],
     );
 
@@ -507,39 +506,35 @@ async fn scan_all_shows_language_and_ecosystems() {
 }
 
 #[tokio::test]
-async fn scan_with_depth_forces_all() {
-    let server = setup_scan_mock_server().await;
-    // --scan 1 --depth 1: should coerce scan to All for recursive mode
-    let stdout = stdout_of_mock_with_token(
+async fn select_filters_root_actions() {
+    let server = setup_mock_server().await;
+    let stdout = stdout_of_mock(
         &server,
         &[
             "--file",
             "tests/fixtures/depth-test-workflow.yml",
             "--provider",
             "ghsa",
-            "--scan",
-            "1",
-            "--depth",
+            "--select",
             "1",
         ],
     );
 
-    // Child actions should also get scan results (forced to All)
-    assert!(
-        stdout.contains("language: TypeScript"),
-        "scan should be forced to all when depth > 0, got:\n{stdout}"
+    // Only the first root action should appear
+    let action_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with(' ')).collect();
+    assert_eq!(
+        action_lines,
+        vec!["test-org/composite-a@v1"],
+        "--select 1 should only include the first root action, got:\n{stdout}"
     );
-
-    // Count occurrences of "language:" — should appear for multiple actions
-    let lang_count = stdout.matches("language: TypeScript").count();
     assert!(
-        lang_count > 1,
-        "scan should apply to children too (forced All), found {lang_count} occurrences:\n{stdout}"
+        !stdout.contains("leaf-action"),
+        "--select 1 should exclude the second root action, got:\n{stdout}"
     );
 }
 
 #[tokio::test]
-async fn scan_none_with_depth_stays_none() {
+async fn select_with_deps() {
     let server = setup_scan_mock_server().await;
     let stdout = stdout_of_mock_with_token(
         &server,
@@ -548,20 +543,25 @@ async fn scan_none_with_depth_stays_none() {
             "tests/fixtures/depth-test-workflow.yml",
             "--provider",
             "ghsa",
-            "--scan",
-            "none",
-            "--depth",
+            "--select",
             "1",
+            "--deps",
         ],
     );
 
+    // Only the first root action should appear
     assert!(
-        !stdout.contains("language:"),
-        "--scan none should suppress scan even with depth, got:\n{stdout}"
+        stdout.contains("test-org/composite-a@v1"),
+        "selected action should appear, got:\n{stdout}"
     );
     assert!(
-        !stdout.contains("ecosystems:"),
-        "--scan none should not show ecosystems, got:\n{stdout}"
+        !stdout.contains("leaf-action"),
+        "unselected action should not appear, got:\n{stdout}"
+    );
+    // Scan data should be present for the selected action
+    assert!(
+        stdout.contains("language: TypeScript"),
+        "--deps should enable scanning for selected action, got:\n{stdout}"
     );
 }
 

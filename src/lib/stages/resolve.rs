@@ -49,7 +49,6 @@ mod tests {
             depth: 0,
             parent: None,
             children: vec![],
-            index: Some(0),
             resolved_ref: None,
             advisories: vec![],
             scan: None,

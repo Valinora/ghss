@@ -23,34 +23,31 @@ use tracing::{debug, warn};
 
 use action_ref::ActionRef;
 
-/// Specifies which actions to scan, by 1-indexed position.
+/// Specifies which root actions to include, by 1-indexed position.
 ///
 /// Valid inputs: `all`, `1-3,5`, `2`, `1,3-5,7`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ScanSelection {
-    None,
+pub enum ActionSelection {
     All,
     /// Sorted, deduplicated 1-indexed positions.
     Indices(Vec<usize>),
 }
 
-impl ScanSelection {
-    /// Returns true if the given 0-indexed position should be scanned.
-    pub fn should_scan(&self, zero_index: usize) -> bool {
+impl ActionSelection {
+    /// Returns true if the given 0-indexed position is included.
+    pub fn includes(&self, zero_index: usize) -> bool {
         match self {
-            ScanSelection::None => false,
-            ScanSelection::All => true,
-            ScanSelection::Indices(indices) => indices.contains(&(zero_index + 1)),
+            ActionSelection::All => true,
+            ActionSelection::Indices(indices) => indices.contains(&(zero_index + 1)),
         }
     }
 }
 
-impl fmt::Display for ScanSelection {
+impl fmt::Display for ActionSelection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ScanSelection::None => write!(f, "none"),
-            ScanSelection::All => write!(f, "all"),
-            ScanSelection::Indices(indices) => {
+            ActionSelection::All => write!(f, "all"),
+            ActionSelection::Indices(indices) => {
                 let parts: Vec<String> = indices.iter().map(ToString::to_string).collect();
                 write!(f, "{}", parts.join(","))
             }
@@ -58,16 +55,13 @@ impl fmt::Display for ScanSelection {
     }
 }
 
-impl FromStr for ScanSelection {
+impl FromStr for ActionSelection {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
         if s.eq_ignore_ascii_case("all") {
-            return Ok(ScanSelection::All);
-        }
-        if s.eq_ignore_ascii_case("none") {
-            return Ok(ScanSelection::None);
+            return Ok(ActionSelection::All);
         }
 
         let mut indices = BTreeSet::new();
@@ -86,7 +80,7 @@ impl FromStr for ScanSelection {
                     .parse()
                     .map_err(|_| anyhow::anyhow!("invalid range end: {end_str:?}"))?;
                 if start == 0 || end == 0 {
-                    bail!("scan indices are 1-based; got 0");
+                    bail!("selection indices are 1-based; got 0");
                 }
                 if start > end {
                     bail!("invalid range: {start}-{end} (start > end)");
@@ -99,17 +93,17 @@ impl FromStr for ScanSelection {
                     .parse()
                     .map_err(|_| anyhow::anyhow!("invalid index: {part:?}"))?;
                 if idx == 0 {
-                    bail!("scan indices are 1-based; got 0");
+                    bail!("selection indices are 1-based; got 0");
                 }
                 indices.insert(idx);
             }
         }
 
         if indices.is_empty() {
-            return Ok(ScanSelection::None);
+            return Ok(ActionSelection::All);
         }
 
-        Ok(ScanSelection::Indices(indices.into_iter().collect()))
+        Ok(ActionSelection::Indices(indices.into_iter().collect()))
     }
 }
 
@@ -159,72 +153,69 @@ mod tests {
     }
 
     #[test]
-    fn scan_selection_parse_all() {
-        assert_eq!("all".parse::<ScanSelection>().unwrap(), ScanSelection::All);
-        assert_eq!("ALL".parse::<ScanSelection>().unwrap(), ScanSelection::All);
-    }
-
-    #[test]
-    fn scan_selection_parse_none() {
+    fn action_selection_parse_all() {
         assert_eq!(
-            "none".parse::<ScanSelection>().unwrap(),
-            ScanSelection::None
+            "all".parse::<ActionSelection>().unwrap(),
+            ActionSelection::All
+        );
+        assert_eq!(
+            "ALL".parse::<ActionSelection>().unwrap(),
+            ActionSelection::All
         );
     }
 
     #[test]
-    fn scan_selection_parse_single() {
+    fn action_selection_parse_single() {
         assert_eq!(
-            "3".parse::<ScanSelection>().unwrap(),
-            ScanSelection::Indices(vec![3])
+            "3".parse::<ActionSelection>().unwrap(),
+            ActionSelection::Indices(vec![3])
         );
     }
 
     #[test]
-    fn scan_selection_parse_range() {
+    fn action_selection_parse_range() {
         assert_eq!(
-            "1-3".parse::<ScanSelection>().unwrap(),
-            ScanSelection::Indices(vec![1, 2, 3])
+            "1-3".parse::<ActionSelection>().unwrap(),
+            ActionSelection::Indices(vec![1, 2, 3])
         );
     }
 
     #[test]
-    fn scan_selection_parse_mixed() {
+    fn action_selection_parse_mixed() {
         assert_eq!(
-            "1-3,5".parse::<ScanSelection>().unwrap(),
-            ScanSelection::Indices(vec![1, 2, 3, 5])
+            "1-3,5".parse::<ActionSelection>().unwrap(),
+            ActionSelection::Indices(vec![1, 2, 3, 5])
         );
     }
 
     #[test]
-    fn scan_selection_parse_deduplicates() {
+    fn action_selection_parse_deduplicates() {
         assert_eq!(
-            "1-3,2-4".parse::<ScanSelection>().unwrap(),
-            ScanSelection::Indices(vec![1, 2, 3, 4])
+            "1-3,2-4".parse::<ActionSelection>().unwrap(),
+            ActionSelection::Indices(vec![1, 2, 3, 4])
         );
     }
 
     #[test]
-    fn scan_selection_parse_rejects_zero() {
-        assert!("0".parse::<ScanSelection>().is_err());
-        assert!("0-3".parse::<ScanSelection>().is_err());
+    fn action_selection_parse_rejects_zero() {
+        assert!("0".parse::<ActionSelection>().is_err());
+        assert!("0-3".parse::<ActionSelection>().is_err());
     }
 
     #[test]
-    fn scan_selection_parse_rejects_inverted_range() {
-        assert!("5-2".parse::<ScanSelection>().is_err());
+    fn action_selection_parse_rejects_inverted_range() {
+        assert!("5-2".parse::<ActionSelection>().is_err());
     }
 
     #[test]
-    fn scan_selection_should_scan() {
-        let sel = ScanSelection::Indices(vec![1, 3, 5]);
-        assert!(sel.should_scan(0)); // position 1
-        assert!(!sel.should_scan(1)); // position 2
-        assert!(sel.should_scan(2)); // position 3
-        assert!(!sel.should_scan(3)); // position 4
-        assert!(sel.should_scan(4)); // position 5
+    fn action_selection_includes() {
+        let sel = ActionSelection::Indices(vec![1, 3, 5]);
+        assert!(sel.includes(0)); // position 1
+        assert!(!sel.includes(1)); // position 2
+        assert!(sel.includes(2)); // position 3
+        assert!(!sel.includes(3)); // position 4
+        assert!(sel.includes(4)); // position 5
 
-        assert!(ScanSelection::All.should_scan(99));
-        assert!(!ScanSelection::None.should_scan(0));
+        assert!(ActionSelection::All.includes(99));
     }
 }
