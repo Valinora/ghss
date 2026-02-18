@@ -235,6 +235,69 @@ fn unknown_provider_exits_with_error() {
 }
 
 #[test]
+fn depth_zero_explicit_matches_default_output() {
+    // --depth 0 explicitly should produce identical output to no --depth flag
+    let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
+    let depth0_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "0"]);
+    assert_eq!(
+        default_stdout, depth0_stdout,
+        "--depth 0 should produce identical output to default (no --depth)"
+    );
+}
+
+#[test]
+fn depth_default_matches_current_behavior() {
+    // No --depth flag (default) should behave like --depth 0
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
+    let action_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.starts_with("  "))
+        .collect();
+    assert_eq!(
+        action_lines,
+        vec![
+            "actions/checkout@v4",
+            "actions/setup-node@v4",
+            "codecov/codecov-action@v3",
+        ]
+    );
+}
+
+#[test]
+fn depth_unlimited_is_accepted() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "unlimited"]);
+    assert!(
+        output.status.success(),
+        "--depth unlimited should be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn depth_invalid_exits_with_error() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "invalid"]);
+    assert!(
+        !output.status.success(),
+        "--depth invalid should fail"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid"),
+        "error message should mention invalid input, got: {stderr}"
+    );
+}
+
+#[test]
+fn depth_zero_json_matches_default_json_output() {
+    let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
+    let depth0_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json", "--depth", "0"]);
+    assert_eq!(
+        default_stdout, depth0_stdout,
+        "--depth 0 --json should produce identical output to default --json"
+    );
+}
+
+#[test]
 fn json_flag_produces_json_tracing_on_stderr() {
     let output = run_ghss(&["--file", "tests/fixtures/malformed-workflow.yml", "--json"]);
 
