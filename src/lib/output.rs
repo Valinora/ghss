@@ -66,7 +66,7 @@ fn write_node(
     let indent = "  ".repeat(depth);
     let entry = &node.entry;
 
-    writeln!(writer, "{indent}{}", entry.action.raw)?;
+    writeln!(writer, "{indent}{}", entry.action)?;
 
     if let Some(sha) = &entry.resolved_sha {
         writeln!(writer, "{indent}  sha: {sha}")?;

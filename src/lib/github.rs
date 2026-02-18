@@ -40,7 +40,7 @@ impl GitHubClient {
         &self.api_base_url
     }
 
-    #[instrument(skip(self), fields(action = %action.raw))]
+    #[instrument(skip(self), fields(action = %action))]
     pub async fn resolve_ref(&self, action: &ActionRef) -> Result<String> {
         if action.ref_type == RefType::Sha {
             return Ok(action.git_ref.clone());

@@ -112,7 +112,7 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
 }
 
 /// Scan an action's repository to detect languages and package ecosystems.
-#[tracing::instrument(skip(client), fields(action = %action.raw))]
+#[tracing::instrument(skip(client), fields(action = %action))]
 pub async fn scan_action(
     action: &ActionRef,
     client: &GitHubClient,
@@ -142,12 +142,12 @@ impl ScanStage {
 
 #[async_trait]
 impl Stage for ScanStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         match scan_action(&ctx.action, &self.client).await {
             Ok(s) => ctx.scan = Some(s),
             Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to scan action");
+                warn!(action = %ctx.action, error = %e, "failed to scan action");
                 ctx.errors.push(StageError {
                     stage: self.name().to_string(),
                     message: e.to_string(),

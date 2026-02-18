@@ -7,7 +7,7 @@ use crate::stages::ScanResult;
 pub struct AuditContext {
     pub action: ActionRef,
     pub depth: usize,
-    pub parent: Option<String>,
+    pub parent: Option<ActionRef>,
     pub children: Vec<ActionRef>,
     // Enrichment results
     pub resolved_ref: Option<String>,

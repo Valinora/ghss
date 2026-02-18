@@ -12,13 +12,13 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw, stage_count = self.stages.len()))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action, stage_count = self.stages.len()))]
     pub async fn run_one(&self, ctx: &mut AuditContext) {
         for stage in self.stages.iter() {
             if let Err(e) = stage.run(ctx).await {
                 tracing::warn!(
                     stage = stage.name(),
-                    action = %ctx.action.raw,
+                    action = %ctx.action,
                     error = %e,
                     "stage failed"
                 );
@@ -27,7 +27,7 @@ impl Pipeline {
                     message: e.to_string(),
                 });
             } else {
-                debug!(stage = stage.name(), action = %ctx.action.raw, "stage complete");
+                debug!(stage = stage.name(), action = %ctx.action, "stage complete");
             }
         }
     }

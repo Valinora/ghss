@@ -135,7 +135,7 @@ impl OsvActionProvider {
 
 #[async_trait]
 impl ActionAdvisoryProvider for OsvActionProvider {
-    #[instrument(skip(self), fields(action = %action.raw))]
+    #[instrument(skip(self), fields(action = %action))]
     async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         self.client
             .query(&action.package_name(), "GitHub Actions")

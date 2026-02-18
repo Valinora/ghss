@@ -78,7 +78,7 @@ impl CompositeExpandStage {
 
 #[async_trait]
 impl Stage for CompositeExpandStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let owner = &ctx.action.owner;
         let repo = &ctx.action.repo;
@@ -94,12 +94,12 @@ impl Stage for CompositeExpandStage {
         }
 
         let Some(yaml_content) = content else {
-            debug!(action = %ctx.action.raw, "no action.yml or action.yaml found, treating as leaf node");
+            debug!(action = %ctx.action, "no action.yml or action.yaml found, treating as leaf node");
             return Ok(());
         };
 
         if let Some(children) = parse_composite_action(&yaml_content)? {
-            debug!(action = %ctx.action.raw, count = children.len(), "discovered composite action children");
+            debug!(action = %ctx.action, count = children.len(), "discovered composite action children");
             ctx.children.extend(children);
         }
 
@@ -131,9 +131,9 @@ runs:
         let result = parse_composite_action(yaml).unwrap();
         let children = result.expect("should be Some for composite action");
         assert_eq!(children.len(), 3);
-        assert_eq!(children[0].raw, "actions/checkout@v4");
-        assert_eq!(children[1].raw, "actions/setup-node@v4");
-        assert_eq!(children[2].raw, "some-org/some-action@v1");
+        assert_eq!(children[0].to_string(), "actions/checkout@v4");
+        assert_eq!(children[1].to_string(), "actions/setup-node@v4");
+        assert_eq!(children[2].to_string(), "some-org/some-action@v1");
     }
 
     #[test]
@@ -164,8 +164,8 @@ runs:
         let result = parse_composite_action(yaml).unwrap();
         let children = result.expect("should be Some for composite action");
         assert_eq!(children.len(), 2);
-        assert_eq!(children[0].raw, "actions/checkout@v4");
-        assert_eq!(children[1].raw, "some-org/real-action@v2");
+        assert_eq!(children[0].to_string(), "actions/checkout@v4");
+        assert_eq!(children[1].to_string(), "some-org/real-action@v2");
     }
 
     #[test]

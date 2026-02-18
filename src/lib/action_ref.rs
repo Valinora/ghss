@@ -26,7 +26,7 @@ impl fmt::Display for RefType {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionRef {
-    pub raw: String,
+    raw: String,
     pub owner: String,
     pub repo: String,
     pub path: Option<String>,
@@ -227,7 +227,7 @@ mod tests {
     fn display_matches_raw() {
         let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
         assert_eq!(format!("{ar}"), "actions/checkout@v4");
-        assert_eq!(ar.to_string(), ar.raw);
+        assert_eq!(ar.to_string(), "actions/checkout@v4");
     }
 
     #[test]

@@ -37,7 +37,7 @@ impl GhsaProvider {
 
 #[async_trait]
 impl ActionAdvisoryProvider for GhsaProvider {
-    #[instrument(skip(self), fields(action = %action.raw))]
+    #[instrument(skip(self), fields(action = %action))]
     async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
         let api_base = self.client.api_base_url();

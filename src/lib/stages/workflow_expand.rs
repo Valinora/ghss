@@ -101,13 +101,13 @@ impl WorkflowExpandStage {
 
 #[async_trait]
 impl Stage for WorkflowExpandStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         // Only process if this action ref points to a workflow file
         let path = match &ctx.action.path {
             Some(p) if p.contains(".github/workflows/") => p.clone(),
             _ => {
-                debug!(action = %ctx.action.raw, "not a reusable workflow path, skipping");
+                debug!(action = %ctx.action, "not a reusable workflow path, skipping");
                 return Ok(());
             }
         };
@@ -119,13 +119,13 @@ impl Stage for WorkflowExpandStage {
         let yaml_content = match self.client.get_raw_content_optional(owner, repo, git_ref, &path).await? {
             Some(content) => content,
             None => {
-                debug!(action = %ctx.action.raw, "workflow file not found, skipping");
+                debug!(action = %ctx.action, "workflow file not found, skipping");
                 return Ok(());
             }
         };
 
         let children = parse_workflow_children(&yaml_content)?;
-        debug!(action = %ctx.action.raw, count = children.len(), "discovered workflow children");
+        debug!(action = %ctx.action, count = children.len(), "discovered workflow children");
         ctx.children.extend(children);
 
         Ok(())
@@ -157,10 +157,10 @@ jobs:
         let children = parse_workflow_children(yaml).unwrap();
         assert_eq!(children.len(), 3);
 
-        let raws: Vec<&str> = children.iter().map(|c| c.raw.as_str()).collect();
-        assert!(raws.contains(&"actions/checkout@v4"));
-        assert!(raws.contains(&"actions/setup-node@v4"));
-        assert!(raws.contains(&"codecov/codecov-action@v3"));
+        let names: Vec<String> = children.iter().map(|c| c.to_string()).collect();
+        assert!(names.contains(&"actions/checkout@v4".to_string()));
+        assert!(names.contains(&"actions/setup-node@v4".to_string()));
+        assert!(names.contains(&"codecov/codecov-action@v3".to_string()));
     }
 
     #[test]
@@ -177,9 +177,9 @@ jobs:
         let children = parse_workflow_children(yaml).unwrap();
         assert_eq!(children.len(), 2);
 
-        let raws: Vec<&str> = children.iter().map(|c| c.raw.as_str()).collect();
-        assert!(raws.contains(&"org/workflows/.github/workflows/ci.yml@main"));
-        assert!(raws.contains(&"org/workflows/.github/workflows/deploy.yml@v1"));
+        let names: Vec<String> = children.iter().map(|c| c.to_string()).collect();
+        assert!(names.contains(&"org/workflows/.github/workflows/ci.yml@main".to_string()));
+        assert!(names.contains(&"org/workflows/.github/workflows/deploy.yml@v1".to_string()));
     }
 
     #[test]
@@ -199,9 +199,9 @@ jobs:
         let children = parse_workflow_children(yaml).unwrap();
         assert_eq!(children.len(), 2);
 
-        let raws: Vec<&str> = children.iter().map(|c| c.raw.as_str()).collect();
-        assert!(raws.contains(&"actions/checkout@v4"));
-        assert!(raws.contains(&"some-org/action@v2"));
+        let names: Vec<String> = children.iter().map(|c| c.to_string()).collect();
+        assert!(names.contains(&"actions/checkout@v4".to_string()));
+        assert!(names.contains(&"some-org/action@v2".to_string()));
     }
 
     #[test]
@@ -221,9 +221,9 @@ jobs:
         let children = parse_workflow_children(yaml).unwrap();
         assert_eq!(children.len(), 2);
 
-        let raws: Vec<&str> = children.iter().map(|c| c.raw.as_str()).collect();
-        assert!(raws.contains(&"actions/checkout@v4"));
-        assert!(raws.contains(&"org/shared/.github/workflows/lint.yml@v2"));
+        let names: Vec<String> = children.iter().map(|c| c.to_string()).collect();
+        assert!(names.contains(&"actions/checkout@v4".to_string()));
+        assert!(names.contains(&"org/shared/.github/workflows/lint.yml@v2".to_string()));
     }
 
     #[test]

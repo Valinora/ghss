@@ -17,12 +17,12 @@ impl RefResolveStage {
 
 #[async_trait]
 impl Stage for RefResolveStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         match self.client.resolve_ref(&ctx.action).await {
             Ok(sha) => ctx.resolved_ref = Some(sha),
             Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to resolve ref");
+                warn!(action = %ctx.action, error = %e, "failed to resolve ref");
                 ctx.errors.push(StageError {
                     stage: self.name().to_string(),
                     message: e.to_string(),

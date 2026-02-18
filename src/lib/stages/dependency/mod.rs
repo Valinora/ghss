@@ -35,7 +35,7 @@ impl DependencyStage {
 
 #[async_trait]
 impl Stage for DependencyStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let ecosystems = ctx
             .scan
@@ -46,7 +46,7 @@ impl Stage for DependencyStage {
             match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
                 Ok(pkgs) => pkgs,
                 Err(e) => {
-                    warn!(action = %ctx.action.raw, error = %e, "failed to fetch dependencies");
+                    warn!(action = %ctx.action, error = %e, "failed to fetch dependencies");
                     ctx.errors.push(StageError {
                         stage: self.name().to_string(),
                         message: e.to_string(),
@@ -56,7 +56,7 @@ impl Stage for DependencyStage {
             };
 
         if packages.is_empty() {
-            debug!(action = %ctx.action.raw, "no ecosystems to scan for dependencies");
+            debug!(action = %ctx.action, "no ecosystems to scan for dependencies");
             return Ok(());
         }
 

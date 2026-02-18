@@ -21,7 +21,7 @@ impl AdvisoryStage {
 
 #[async_trait]
 impl Stage for AdvisoryStage {
-    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw))]
+    #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
         let results = join_all(self.providers.iter().map(|p| {
             let p = p.clone();
@@ -35,7 +35,7 @@ impl Stage for AdvisoryStage {
             match result {
                 Ok(advs) => advisories.extend(advs),
                 Err(e) => {
-                    warn!(action = %ctx.action.raw, provider = %provider_name, error = %e, "failed to query advisories");
+                    warn!(action = %ctx.action, provider = %provider_name, error = %e, "failed to query advisories");
                     ctx.errors.push(StageError {
                         stage: self.name().to_string(),
                         message: format!("{provider_name}: {e}"),
@@ -44,7 +44,7 @@ impl Stage for AdvisoryStage {
             }
         }
         ctx.advisories = deduplicate_advisories(advisories);
-        debug!(action = %ctx.action.raw, count = ctx.advisories.len(), "advisories collected");
+        debug!(action = %ctx.action, count = ctx.advisories.len(), "advisories collected");
         Ok(())
     }
 
