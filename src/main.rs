@@ -5,8 +5,9 @@ use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing_subscriber::{fmt, EnvFilter};
 
+use ghss::context::AuditContext;
 use ghss::github::GitHubClient;
-use ghss::output;
+use ghss::output::{self, ActionEntry};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
 use ghss::stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
@@ -99,7 +100,25 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         builder = builder.stage(DependencyStage::new(client.clone(), package_providers));
     }
 
-    let entries = builder.build().run(actions).await;
+    let pipeline = builder.build();
+
+    let mut entries = Vec::with_capacity(actions.len());
+    for (idx, action) in actions.into_iter().enumerate() {
+        let mut ctx = AuditContext {
+            action,
+            depth: 0,
+            parent: None,
+            children: vec![],
+            index: Some(idx),
+            resolved_ref: None,
+            advisories: vec![],
+            scan: None,
+            dependencies: vec![],
+            errors: vec![],
+        };
+        pipeline.run_one(&mut ctx).await;
+        entries.push(ActionEntry::from(ctx));
+    }
 
     let formatter = output::formatter(args.json);
     formatter

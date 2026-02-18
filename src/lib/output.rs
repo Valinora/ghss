@@ -31,6 +31,23 @@ impl From<AuditContext> for ActionEntry {
     }
 }
 
+#[derive(Serialize)]
+pub struct AuditNode {
+    #[serde(flatten)]
+    pub entry: ActionEntry,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<AuditNode>,
+}
+
+impl From<AuditContext> for AuditNode {
+    fn from(ctx: AuditContext) -> Self {
+        Self {
+            entry: ActionEntry::from(ctx),
+            children: vec![],
+        }
+    }
+}
+
 pub trait OutputFormatter {
     fn write_results(
         &self,
@@ -382,5 +399,95 @@ mod tests {
         assert!(output.contains("ecosystems: npm, docker"));
         assert!(output.contains("sha: abc123"));
         assert!(output.contains("advisories: none"));
+    }
+
+    #[test]
+    fn audit_node_from_context() {
+        use crate::context::AuditContext;
+
+        let ctx = AuditContext {
+            action: sample_action(),
+            depth: 0,
+            parent: None,
+            children: vec![],
+            index: Some(0),
+            resolved_ref: Some("abc123".to_string()),
+            advisories: vec![Advisory {
+                id: "GHSA-5678".to_string(),
+                aliases: vec![],
+                summary: "Test advisory".to_string(),
+                severity: "medium".to_string(),
+                url: "https://example.com/5678".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: None,
+            dependencies: vec![],
+            errors: vec![],
+        };
+
+        let node: AuditNode = ctx.into();
+        assert_eq!(node.entry.action, sample_action());
+        assert_eq!(node.entry.resolved_sha, Some("abc123".to_string()));
+        assert_eq!(node.entry.advisories.len(), 1);
+        assert_eq!(node.entry.advisories[0].id, "GHSA-5678");
+        assert!(node.entry.scan.is_none());
+        assert!(node.entry.dep_vulnerabilities.is_empty());
+        assert!(node.children.is_empty());
+    }
+
+    #[test]
+    fn audit_node_serialization_omits_empty_children() {
+        let node = AuditNode {
+            entry: ActionEntry {
+                action: sample_action(),
+                resolved_sha: None,
+                advisories: vec![],
+                scan: None,
+                dep_vulnerabilities: vec![],
+            },
+            children: vec![],
+        };
+
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(
+            !json.contains("\"children\""),
+            "expected 'children' key to be absent in JSON, got: {json}"
+        );
+    }
+
+    #[test]
+    fn audit_node_serialization_includes_children() {
+        let child = AuditNode {
+            entry: ActionEntry {
+                action: "actions/setup-node@v4".parse::<ActionRef>().unwrap(),
+                resolved_sha: None,
+                advisories: vec![],
+                scan: None,
+                dep_vulnerabilities: vec![],
+            },
+            children: vec![],
+        };
+
+        let parent = AuditNode {
+            entry: ActionEntry {
+                action: sample_action(),
+                resolved_sha: None,
+                advisories: vec![],
+                scan: None,
+                dep_vulnerabilities: vec![],
+            },
+            children: vec![child],
+        };
+
+        let json = serde_json::to_string_pretty(&parent).unwrap();
+        assert!(
+            json.contains("\"children\""),
+            "expected 'children' key in JSON, got: {json}"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let children = parsed["children"].as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["raw"], "actions/setup-node@v4");
     }
 }

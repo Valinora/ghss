@@ -1,12 +1,8 @@
 use std::sync::Arc;
 
-use futures::future::join_all;
-use tokio::sync::Semaphore;
 use tracing::{debug, instrument};
 
-use crate::action_ref::ActionRef;
 use crate::context::AuditContext;
-use crate::output::ActionEntry;
 use crate::stages::Stage;
 
 pub struct Pipeline {
@@ -15,61 +11,32 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    #[instrument(skip(self, actions), fields(action_count = actions.len(), stage_count = self.stages.len()))]
-    pub async fn run(&self, actions: Vec<ActionRef>) -> Vec<ActionEntry> {
-        let sem = Arc::new(Semaphore::new(self.max_concurrency));
-        let stages = self.stages.clone();
-
-        let futures: Vec<_> = actions
-            .into_iter()
-            .enumerate()
-            .map(|(idx, action)| {
-                let sem = sem.clone();
-                let stages = stages.clone();
-                async move {
-                    let _permit = sem.acquire().await.expect("semaphore closed");
-                    debug!(action = %action.raw, "processing action");
-
-                    let mut ctx = AuditContext {
-                        action,
-                        depth: 0,
-                        parent: None,
-                        children: vec![],
-                        index: Some(idx),
-                        resolved_ref: None,
-                        advisories: vec![],
-                        scan: None,
-                        dependencies: vec![],
-                        errors: vec![],
-                    };
-
-                    for stage in stages.iter() {
-                        if let Err(e) = stage.run(&mut ctx).await {
-                            tracing::warn!(
-                                stage = stage.name(),
-                                action = %ctx.action.raw,
-                                error = %e,
-                                "stage failed"
-                            );
-                            ctx.errors.push(crate::context::StageError {
-                                stage: stage.name().to_string(),
-                                message: e.to_string(),
-                            });
-                        } else {
-                            debug!(stage = stage.name(), action = %ctx.action.raw, "stage complete");
-                        }
-                    }
-
-                    ActionEntry::from(ctx)
-                }
-            })
-            .collect();
-
-        join_all(futures).await
+    #[instrument(skip(self, ctx), fields(action = %ctx.action.raw, stage_count = self.stages.len()))]
+    pub async fn run_one(&self, ctx: &mut AuditContext) {
+        for stage in self.stages.iter() {
+            if let Err(e) = stage.run(ctx).await {
+                tracing::warn!(
+                    stage = stage.name(),
+                    action = %ctx.action.raw,
+                    error = %e,
+                    "stage failed"
+                );
+                ctx.errors.push(crate::context::StageError {
+                    stage: stage.name().to_string(),
+                    message: e.to_string(),
+                });
+            } else {
+                debug!(stage = stage.name(), action = %ctx.action.raw, "stage complete");
+            }
+        }
     }
 
     pub fn stage_count(&self) -> usize {
         self.stages.len()
+    }
+
+    pub fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 }
 
@@ -113,17 +80,54 @@ impl Default for PipelineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
     use async_trait::async_trait;
 
-    struct NoOpStage(&'static str);
+    fn test_ctx() -> AuditContext {
+        AuditContext {
+            action: "actions/checkout@v4".parse().unwrap(),
+            depth: 0,
+            parent: None,
+            children: vec![],
+            index: Some(0),
+            resolved_ref: None,
+            advisories: vec![],
+            scan: None,
+            dependencies: vec![],
+            errors: vec![],
+        }
+    }
+
+    struct TrackingStage {
+        name: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
 
     #[async_trait]
-    impl Stage for NoOpStage {
+    impl Stage for TrackingStage {
         async fn run(&self, _ctx: &mut AuditContext) -> anyhow::Result<()> {
+            self.log.lock().unwrap().push(self.name.to_string());
             Ok(())
         }
         fn name(&self) -> &str {
-            self.0
+            self.name
+        }
+    }
+
+    struct FailingStage {
+        name: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Stage for FailingStage {
+        async fn run(&self, _ctx: &mut AuditContext) -> anyhow::Result<()> {
+            self.log.lock().unwrap().push(self.name.to_string());
+            Err(anyhow::anyhow!("boom"))
+        }
+        fn name(&self) -> &str {
+            self.name
         }
     }
 
@@ -136,10 +140,11 @@ mod tests {
 
     #[test]
     fn builder_stage_count() {
+        let log = Arc::new(Mutex::new(Vec::new()));
         let pipeline = PipelineBuilder::new()
-            .stage(NoOpStage("a"))
-            .stage(NoOpStage("b"))
-            .stage(NoOpStage("c"))
+            .stage(TrackingStage { name: "a", log: log.clone() })
+            .stage(TrackingStage { name: "b", log: log.clone() })
+            .stage(TrackingStage { name: "c", log: log.clone() })
             .build();
         assert_eq!(pipeline.stage_count(), 3);
     }
@@ -152,10 +157,11 @@ mod tests {
 
     #[test]
     fn builder_stage_ordering() {
+        let log = Arc::new(Mutex::new(Vec::new()));
         let pipeline = PipelineBuilder::new()
-            .stage(NoOpStage("first"))
-            .stage(NoOpStage("second"))
-            .stage(NoOpStage("third"))
+            .stage(TrackingStage { name: "first", log: log.clone() })
+            .stage(TrackingStage { name: "second", log: log.clone() })
+            .stage(TrackingStage { name: "third", log: log.clone() })
             .build();
 
         let names: Vec<&str> = pipeline.stages.iter().map(|s| s.name()).collect();
@@ -163,22 +169,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_empty_actions() {
-        let pipeline = PipelineBuilder::new()
-            .stage(NoOpStage("test"))
-            .build();
-        let results = pipeline.run(vec![]).await;
-        assert!(results.is_empty());
+    async fn run_one_with_no_stages() {
+        let pipeline = PipelineBuilder::new().build();
+        let mut ctx = test_ctx();
+        pipeline.run_one(&mut ctx).await;
+        assert!(ctx.errors.is_empty());
     }
 
     #[tokio::test]
-    async fn run_processes_all_actions() {
-        let pipeline = PipelineBuilder::new().build();
-        let actions = vec![
-            "actions/checkout@v4".parse().unwrap(),
-            "actions/setup-node@v3".parse().unwrap(),
-        ];
-        let results = pipeline.run(actions).await;
-        assert_eq!(results.len(), 2);
+    async fn run_one_processes_context() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let pipeline = PipelineBuilder::new()
+            .stage(TrackingStage { name: "test", log: log.clone() })
+            .build();
+        let mut ctx = test_ctx();
+        pipeline.run_one(&mut ctx).await;
+        assert!(ctx.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_one_stages_execute_in_order() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+
+        let pipeline = PipelineBuilder::new()
+            .stage(TrackingStage { name: "first", log: log.clone() })
+            .stage(TrackingStage { name: "second", log: log.clone() })
+            .stage(TrackingStage { name: "third", log: log.clone() })
+            .build();
+
+        let mut ctx = test_ctx();
+        pipeline.run_one(&mut ctx).await;
+
+        let executed = log.lock().unwrap();
+        assert_eq!(*executed, vec!["first", "second", "third"]);
+        assert!(ctx.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_one_captures_error_and_continues() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+
+        let pipeline = PipelineBuilder::new()
+            .stage(TrackingStage { name: "before", log: log.clone() })
+            .stage(FailingStage { name: "bad", log: log.clone() })
+            .stage(TrackingStage { name: "after", log: log.clone() })
+            .build();
+
+        let mut ctx = test_ctx();
+        pipeline.run_one(&mut ctx).await;
+
+        // All three stages executed despite the middle one failing
+        let executed = log.lock().unwrap();
+        assert_eq!(*executed, vec!["before", "bad", "after"]);
+
+        // Exactly one error captured with correct stage name and message
+        assert_eq!(ctx.errors.len(), 1);
+        assert_eq!(ctx.errors[0].stage, "bad");
+        assert_eq!(ctx.errors[0].message, "boom");
     }
 }

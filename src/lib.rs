@@ -4,6 +4,7 @@ mod modules;
 pub use modules::action_ref;
 pub use modules::advisory;
 pub use modules::context;
+pub use modules::depth;
 pub use modules::github;
 pub use modules::output;
 pub use modules::pipeline;
