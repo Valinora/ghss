@@ -3,7 +3,7 @@ use serde::Deserialize;
 use tracing::{debug, instrument, warn};
 
 use crate::action_ref::ActionRef;
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::github::GitHubClient;
 
 use super::Stage;
@@ -85,50 +85,22 @@ impl Stage for CompositeExpandStage {
         let git_ref = &ctx.action.git_ref;
 
         // Try action.yml first, then action.yaml
-        let yaml_content = match self.client.get_raw_content(owner, repo, git_ref, "action.yml").await {
-            Ok(content) => content,
-            Err(e) if e.to_string().contains("not found") => {
-                match self.client.get_raw_content(owner, repo, git_ref, "action.yaml").await {
-                    Ok(content) => content,
-                    Err(e2) if e2.to_string().contains("not found") => {
-                        debug!(action = %ctx.action.raw, "no action.yml or action.yaml found, treating as leaf node");
-                        return Ok(());
-                    }
-                    Err(e2) => {
-                        warn!(action = %ctx.action.raw, error = %e2, "failed to fetch action.yaml");
-                        ctx.errors.push(StageError {
-                            stage: self.name().to_string(),
-                            message: e2.to_string(),
-                        });
-                        return Ok(());
-                    }
-                }
+        let mut content = None;
+        for filename in ["action.yml", "action.yaml"] {
+            if let Some(c) = self.client.get_raw_content_optional(owner, repo, git_ref, filename).await? {
+                content = Some(c);
+                break;
             }
-            Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to fetch action.yml");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
-                return Ok(());
-            }
+        }
+
+        let Some(yaml_content) = content else {
+            debug!(action = %ctx.action.raw, "no action.yml or action.yaml found, treating as leaf node");
+            return Ok(());
         };
 
-        match parse_composite_action(&yaml_content) {
-            Ok(Some(children)) => {
-                debug!(action = %ctx.action.raw, count = children.len(), "discovered composite action children");
-                ctx.children.extend(children);
-            }
-            Ok(None) => {
-                // Not a composite action, skip
-            }
-            Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to parse action YAML");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
-            }
+        if let Some(children) = parse_composite_action(&yaml_content)? {
+            debug!(action = %ctx.action.raw, count = children.len(), "discovered composite action children");
+            ctx.children.extend(children);
         }
 
         Ok(())

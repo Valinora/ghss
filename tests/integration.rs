@@ -235,6 +235,7 @@ fn unknown_provider_exits_with_error() {
 }
 
 #[test]
+#[ignore] // hits live GitHub API; flaky under rate limiting
 fn depth_zero_explicit_matches_default_output() {
     // --depth 0 explicitly should produce identical output to no --depth flag
     let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
@@ -288,6 +289,7 @@ fn depth_invalid_exits_with_error() {
 }
 
 #[test]
+#[ignore] // hits live GitHub API; flaky under rate limiting
 fn depth_zero_json_matches_default_json_output() {
     let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
     let depth0_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json", "--depth", "0"]);

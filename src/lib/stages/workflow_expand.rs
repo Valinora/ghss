@@ -5,7 +5,7 @@ use serde::Deserialize;
 use tracing::{debug, instrument, warn};
 
 use crate::action_ref::ActionRef;
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::github::GitHubClient;
 
 use super::Stage;
@@ -116,35 +116,17 @@ impl Stage for WorkflowExpandStage {
         let repo = &ctx.action.repo;
         let git_ref = &ctx.action.git_ref;
 
-        let yaml_content = match self.client.get_raw_content(owner, repo, git_ref, &path).await {
-            Ok(content) => content,
-            Err(e) if e.to_string().contains("not found") => {
+        let yaml_content = match self.client.get_raw_content_optional(owner, repo, git_ref, &path).await? {
+            Some(content) => content,
+            None => {
                 debug!(action = %ctx.action.raw, "workflow file not found, skipping");
-                return Ok(());
-            }
-            Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to fetch workflow file");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
                 return Ok(());
             }
         };
 
-        match parse_workflow_children(&yaml_content) {
-            Ok(children) => {
-                debug!(action = %ctx.action.raw, count = children.len(), "discovered workflow children");
-                ctx.children.extend(children);
-            }
-            Err(e) => {
-                warn!(action = %ctx.action.raw, error = %e, "failed to parse remote workflow YAML");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
-            }
-        }
+        let children = parse_workflow_children(&yaml_content)?;
+        debug!(action = %ctx.action.raw, count = children.len(), "discovered workflow children");
+        ctx.children.extend(children);
 
         Ok(())
     }

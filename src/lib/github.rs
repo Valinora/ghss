@@ -125,13 +125,13 @@ impl GitHubClient {
             .await
             .with_context(|| format!("request to {url} failed"))?;
 
-        let status = response.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        if !status.is_success() {
-            bail!("{url} returned HTTP {status}");
-        }
+
+        let response = response
+            .error_for_status()
+            .with_context(|| format!("{url} returned non-success status"))?;
 
         let json = response
             .json()
@@ -147,19 +147,17 @@ impl GitHubClient {
             .ok_or_else(|| anyhow::anyhow!("{url} returned HTTP 404"))
     }
 
-    /// Fetch raw file content from a repository via raw.githubusercontent.com.
+    /// Fetch raw file content from a repository, returning `None` on 404.
     #[instrument(skip(self))]
-    pub async fn get_raw_content(
+    pub async fn get_raw_content_optional(
         &self,
         owner: &str,
         repo: &str,
         git_ref: &str,
         path: &str,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         let raw_base = &self.raw_base_url;
-        let url = format!(
-            "{raw_base}/{owner}/{repo}/{git_ref}/{path}"
-        );
+        let url = format!("{raw_base}/{owner}/{repo}/{git_ref}/{path}");
 
         let mut request = self.client.get(&url);
         if let Some(token) = &self.token {
@@ -171,18 +169,34 @@ impl GitHubClient {
             .await
             .with_context(|| format!("failed to fetch {url}"))?;
 
-        let status = response.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            bail!("{path} not found in {owner}/{repo}@{git_ref}");
-        }
-        if !status.is_success() {
-            bail!("{url} returned HTTP {status}");
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
         }
 
-        response
+        let response = response
+            .error_for_status()
+            .with_context(|| format!("{url} returned non-success status"))?;
+
+        let text = response
             .text()
             .await
-            .with_context(|| format!("failed to read body from {url}"))
+            .with_context(|| format!("failed to read body from {url}"))?;
+
+        Ok(Some(text))
+    }
+
+    /// Fetch raw file content from a repository. Returns an error on 404.
+    #[instrument(skip(self))]
+    pub async fn get_raw_content(
+        &self,
+        owner: &str,
+        repo: &str,
+        git_ref: &str,
+        path: &str,
+    ) -> Result<String> {
+        self.get_raw_content_optional(owner, repo, git_ref, path)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("{path} not found in {owner}/{repo}@{git_ref}"))
     }
 
     /// Send a GraphQL query to the GitHub API. Requires authentication.
@@ -206,10 +220,9 @@ impl GitHubClient {
             .await
             .context("GraphQL request failed")?;
 
-        let status = response.status();
-        if !status.is_success() {
-            bail!("GraphQL API returned HTTP {status}");
-        }
+        let response = response
+            .error_for_status()
+            .context("GraphQL API returned non-success status")?;
 
         let json: Value = response
             .json()
