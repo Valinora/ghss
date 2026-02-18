@@ -1,9 +1,11 @@
 pub mod action_ref;
 pub mod advisory;
 pub mod context;
+pub mod depth;
 pub mod github;
 pub mod output;
 pub mod pipeline;
 pub mod providers;
 pub mod stages;
+pub mod walker;
 pub mod workflow;

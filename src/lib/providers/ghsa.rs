@@ -6,7 +6,7 @@ use tracing::instrument;
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
-use crate::github::{GitHubClient, GITHUB_API_BASE};
+use crate::github::GitHubClient;
 
 use super::ActionAdvisoryProvider;
 
@@ -40,10 +40,11 @@ impl ActionAdvisoryProvider for GhsaProvider {
     #[instrument(skip(self), fields(action = %action.raw))]
     async fn query(&self, action: &ActionRef) -> Result<Vec<Advisory>> {
         let package_name = action.package_name();
+        let api_base = self.client.api_base_url();
         let json = self
             .client
             .api_get(&format!(
-                "{GITHUB_API_BASE}/advisories?ecosystem=actions&affects={package_name}"
+                "{api_base}/advisories?ecosystem=actions&affects={package_name}"
             ))
             .await
             .with_context(|| format!("failed to query advisories for {package_name}"))?;
@@ -51,7 +52,7 @@ impl ActionAdvisoryProvider for GhsaProvider {
         parse_advisories(json)
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "GHSA"
     }
 }

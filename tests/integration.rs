@@ -235,6 +235,69 @@ fn unknown_provider_exits_with_error() {
 }
 
 #[test]
+fn depth_zero_explicit_matches_default_output() {
+    // --depth 0 explicitly should produce identical output to no --depth flag
+    let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
+    let depth0_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "0"]);
+    assert_eq!(
+        default_stdout, depth0_stdout,
+        "--depth 0 should produce identical output to default (no --depth)"
+    );
+}
+
+#[test]
+fn depth_default_matches_current_behavior() {
+    // No --depth flag (default) should behave like --depth 0
+    let stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml"]);
+    let action_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.starts_with("  "))
+        .collect();
+    assert_eq!(
+        action_lines,
+        vec![
+            "actions/checkout@v4",
+            "actions/setup-node@v4",
+            "codecov/codecov-action@v3",
+        ]
+    );
+}
+
+#[test]
+fn depth_unlimited_is_accepted() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "unlimited"]);
+    assert!(
+        output.status.success(),
+        "--depth unlimited should be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn depth_invalid_exits_with_error() {
+    let output = run_ghss(&["--file", "tests/fixtures/sample-workflow.yml", "--depth", "invalid"]);
+    assert!(
+        !output.status.success(),
+        "--depth invalid should fail"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid"),
+        "error message should mention invalid input, got: {stderr}"
+    );
+}
+
+#[test]
+fn depth_zero_json_matches_default_json_output() {
+    let default_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json"]);
+    let depth0_stdout = stdout_of(&["--file", "tests/fixtures/sample-workflow.yml", "--json", "--depth", "0"]);
+    assert_eq!(
+        default_stdout, depth0_stdout,
+        "--depth 0 --json should produce identical output to default --json"
+    );
+}
+
+#[test]
 fn json_flag_produces_json_tracing_on_stderr() {
     let output = run_ghss(&["--file", "tests/fixtures/malformed-workflow.yml", "--json"]);
 
@@ -249,4 +312,70 @@ fn json_flag_produces_json_tracing_on_stderr() {
             "stderr line should be valid JSON: {line}"
         );
     }
+}
+
+// ── Depth demo tests (require network + GITHUB_TOKEN) ──
+
+/// Requires network access and a GitHub token.
+/// Run with: cargo test --test integration -- --ignored depth_demo
+#[test]
+#[ignore]
+fn depth_demo_expands_composite_at_depth_1() {
+    let stdout = stdout_of(&[
+        "--file",
+        "tests/fixtures/depth-demo-workflow.yml",
+        "--depth",
+        "1",
+    ]);
+
+    // At depth 0 the composite action itself should appear
+    assert!(
+        stdout.contains("tj-actions/changed-files@v35"),
+        "should list the composite action itself"
+    );
+
+    // At depth 1 the composite's child actions should appear indented
+    assert!(
+        stdout.contains("tj-actions/glob"),
+        "should expand composite to reveal tj-actions/glob child action"
+    );
+}
+
+/// Requires network access and a GitHub token.
+/// Run with: cargo test --test integration -- --ignored depth_demo
+#[test]
+#[ignore]
+fn depth_demo_expands_reusable_workflow_at_depth_1() {
+    let stdout = stdout_of(&[
+        "--file",
+        "tests/fixtures/depth-demo-workflow.yml",
+        "--depth",
+        "1",
+    ]);
+
+    // The reusable workflow ref itself should appear
+    assert!(
+        stdout.contains("slsa-framework/slsa-github-generator"),
+        "should list the reusable workflow ref"
+    );
+
+    // At depth 1 the workflow's internal actions should appear as children.
+    // The SLSA generator workflow uses actions/checkout internally.
+    // Check for at least one child action from the expanded workflow.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let slsa_idx = lines.iter().position(|l| l.contains("slsa-framework/slsa-github-generator"));
+    assert!(
+        slsa_idx.is_some(),
+        "should find the slsa-framework ref in output"
+    );
+
+    // There should be indented children after the SLSA workflow ref
+    let after_slsa: Vec<&&str> = lines[slsa_idx.unwrap() + 1..]
+        .iter()
+        .take_while(|l| l.starts_with("  "))
+        .collect();
+    assert!(
+        !after_slsa.is_empty(),
+        "reusable workflow should have indented child actions at depth 1"
+    );
 }

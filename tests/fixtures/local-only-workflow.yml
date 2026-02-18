@@ -1,0 +1,10 @@
+name: Local Only
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./local-action
+      - uses: docker://alpine:3.18
+      - name: Build
+        run: echo "hello"

@@ -66,15 +66,25 @@ struct OsvDatabaseSpecific {
 // Shared client — owns HTTP logic and response parsing
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OsvClient {
     http: reqwest::Client,
+    base_url: String,
+}
+
+impl Default for OsvClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OsvClient {
     pub fn new() -> Self {
+        let base_url = std::env::var("GHSS_OSV_BASE_URL")
+            .unwrap_or_else(|_| OSV_API_URL.to_string());
         Self {
             http: reqwest::Client::new(),
+            base_url,
         }
     }
 
@@ -89,7 +99,7 @@ impl OsvClient {
 
         let response = self
             .http
-            .post(OSV_API_URL)
+            .post(&self.base_url)
             .json(&body)
             .send()
             .await
@@ -132,7 +142,7 @@ impl ActionAdvisoryProvider for OsvActionProvider {
             .await
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "OSV"
     }
 }
@@ -154,7 +164,7 @@ impl PackageAdvisoryProvider for OsvPackageProvider {
         self.client.query(package, ecosystem).await
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "OSV"
     }
 }
@@ -175,8 +185,7 @@ pub fn parse_osv_response(json: serde_json::Value) -> Result<Vec<Advisory>> {
                 .database_specific
                 .as_ref()
                 .and_then(|db| db.severity.as_ref())
-                .map(|s| s.to_lowercase())
-                .unwrap_or_else(|| "unknown".to_string());
+                .map_or_else(|| "unknown".to_string(), |s| s.to_lowercase());
 
             let url = vuln
                 .references

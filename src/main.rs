@@ -5,11 +5,16 @@ use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing_subscriber::{fmt, EnvFilter};
 
+use ghss::depth::DepthLimit;
 use ghss::github::GitHubClient;
-use ghss::output;
+use ghss::output::{self, AuditNode};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
-use ghss::stages::{AdvisoryStage, DependencyStage, RefResolveStage, ScanStage};
+use ghss::stages::{
+    AdvisoryStage, CompositeExpandStage, DependencyStage, RefResolveStage, ScanStage,
+    WorkflowExpandStage,
+};
+use ghss::walker::Walker;
 
 /// Audit GitHub Actions workflows for third-party action usage
 #[derive(Parser)]
@@ -27,6 +32,10 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Recursive expansion depth for composite actions and reusable workflows (0 = no expansion, "unlimited" = full traversal)
+    #[arg(long, default_value = "0")]
+    depth: DepthLimit,
+
     /// Scan action repositories for languages and ecosystems (all, or 1-indexed ranges like 1-3,5)
     #[arg(long)]
     scan: Option<ghss::ScanSelection>,
@@ -35,7 +44,7 @@ struct Cli {
     #[arg(long)]
     deps: bool,
 
-    /// GitHub personal access token (or set GITHUB_TOKEN env var)
+    /// GitHub personal access token (or set `GITHUB_TOKEN` env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
 
@@ -74,7 +83,17 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
 
     let actions = ghss::parse_actions(&args.file)?;
     let client = GitHubClient::new(args.github_token.clone());
+
+    // When depth > 0 and scan is provided, force ScanSelection::All
+    let is_recursive = !matches!(args.depth, DepthLimit::Bounded(0));
     let scan = match (&args.scan, args.deps) {
+        (Some(sel), _) if is_recursive => {
+            if matches!(sel, ghss::ScanSelection::None) {
+                sel.clone()
+            } else {
+                ghss::ScanSelection::All
+            }
+        }
         (Some(sel), _) => sel.clone(),
         (None, true) => ghss::ScanSelection::All,
         (None, false) => ghss::ScanSelection::None,
@@ -89,6 +108,8 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     let package_providers = providers::create_package_providers(&args.provider)?;
 
     let mut builder = PipelineBuilder::default()
+        .stage(CompositeExpandStage::new(client.clone()))
+        .stage(WorkflowExpandStage::new(client.clone()))
         .stage(RefResolveStage::new(client.clone()))
         .stage(AdvisoryStage::new(action_providers));
 
@@ -99,11 +120,14 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         builder = builder.stage(DependencyStage::new(client.clone(), package_providers));
     }
 
-    let entries = builder.build().run(actions).await;
+    let pipeline = builder.build();
+    let max_concurrency = pipeline.max_concurrency();
+    let walker = Walker::new(pipeline, args.depth.to_max_depth(), max_concurrency);
+    let nodes: Vec<AuditNode> = walker.walk(actions).await;
 
     let formatter = output::formatter(args.json);
     formatter
-        .write_results(&entries, &mut std::io::stdout().lock())
+        .write_results(&nodes, &mut std::io::stdout().lock())
         .expect("failed to write output");
 
     Ok(())

@@ -40,8 +40,7 @@ impl Stage for DependencyStage {
         let ecosystems = ctx
             .scan
             .as_ref()
-            .map(|s| s.ecosystems.as_slice())
-            .unwrap_or(&[]);
+            .map_or(&[] as &[_], |s| s.ecosystems.as_slice());
 
         let packages =
             match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
@@ -105,7 +104,7 @@ impl Stage for DependencyStage {
         Ok(())
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Dependency"
     }
 }
@@ -115,12 +114,11 @@ mod tests {
     use super::*;
     use crate::action_ref::ActionRef;
     use crate::context::AuditContext;
+    use crate::stages::ScanResult;
 
-    #[tokio::test]
-    async fn dependency_stage_skips_without_scan_data() {
-        let stage = DependencyStage::new(GitHubClient::new(None), vec![]);
+    fn make_ctx() -> AuditContext {
         let action: ActionRef = "actions/checkout@v4".parse().unwrap();
-        let mut ctx = AuditContext {
+        AuditContext {
             action,
             depth: 0,
             parent: None,
@@ -131,7 +129,27 @@ mod tests {
             scan: None,
             dependencies: vec![],
             errors: vec![],
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn dependency_stage_skips_without_scan_data() {
+        let stage = DependencyStage::new(GitHubClient::new(None), vec![]);
+        let mut ctx = make_ctx();
+
+        stage.run(&mut ctx).await.unwrap();
+        assert!(ctx.dependencies.is_empty());
+        assert!(ctx.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn skips_with_empty_ecosystems() {
+        let stage = DependencyStage::new(GitHubClient::new(None), vec![]);
+        let mut ctx = make_ctx();
+        ctx.scan = Some(ScanResult {
+            primary_language: Some("JavaScript".to_string()),
+            ecosystems: vec![],
+        });
 
         stage.run(&mut ctx).await.unwrap();
         assert!(ctx.dependencies.is_empty());

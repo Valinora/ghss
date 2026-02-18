@@ -4,11 +4,13 @@ mod modules;
 pub use modules::action_ref;
 pub use modules::advisory;
 pub use modules::context;
+pub use modules::depth;
 pub use modules::github;
 pub use modules::output;
 pub use modules::pipeline;
 pub use modules::providers;
 pub use modules::stages;
+pub use modules::walker;
 pub use modules::workflow;
 
 use std::collections::BTreeSet;
@@ -49,7 +51,7 @@ impl fmt::Display for ScanSelection {
             ScanSelection::None => write!(f, "none"),
             ScanSelection::All => write!(f, "all"),
             ScanSelection::Indices(indices) => {
-                let parts: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
+                let parts: Vec<String> = indices.iter().map(ToString::to_string).collect();
                 write!(f, "{}", parts.join(","))
             }
         }

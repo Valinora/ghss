@@ -1,0 +1,16 @@
+name: Depth Demo
+
+on: push
+
+jobs:
+  composite-expansion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get changed files (composite action — expands at depth 1)
+        uses: tj-actions/changed-files@v35
+
+  reusable-workflow:
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "deadbeef  artifact.tar.gz"
