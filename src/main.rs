@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long)]
     deps: bool,
 
-    /// GitHub personal access token (or set GITHUB_TOKEN env var)
+    /// GitHub personal access token (or set `GITHUB_TOKEN` env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
 
@@ -88,10 +88,10 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
     let is_recursive = !matches!(args.depth, DepthLimit::Bounded(0));
     let scan = match (&args.scan, args.deps) {
         (Some(sel), _) if is_recursive => {
-            if !matches!(sel, ghss::ScanSelection::None) {
-                ghss::ScanSelection::All
-            } else {
+            if matches!(sel, ghss::ScanSelection::None) {
                 sel.clone()
+            } else {
+                ghss::ScanSelection::All
             }
         }
         (Some(sel), _) => sel.clone(),

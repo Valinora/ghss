@@ -1,0 +1,8 @@
+name: Depth Test
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: test-org/composite-a@v1
+      - uses: test-org/leaf-action@v1

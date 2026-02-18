@@ -149,7 +149,7 @@ impl Stage for WorkflowExpandStage {
         Ok(())
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "WorkflowExpand"
     }
 }

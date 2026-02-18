@@ -134,7 +134,7 @@ impl Stage for CompositeExpandStage {
         Ok(())
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "CompositeExpand"
     }
 }

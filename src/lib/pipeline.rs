@@ -111,7 +111,7 @@ mod tests {
             self.log.lock().unwrap().push(self.name.to_string());
             Ok(())
         }
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             self.name
         }
     }
@@ -127,7 +127,7 @@ mod tests {
             self.log.lock().unwrap().push(self.name.to_string());
             Err(anyhow::anyhow!("boom"))
         }
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             self.name
         }
     }

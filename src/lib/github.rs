@@ -5,26 +5,39 @@ use tracing::instrument;
 use crate::action_ref::{ActionRef, RefType};
 
 pub const GITHUB_API_BASE: &str = "https://api.github.com";
+const RAW_CONTENT_BASE: &str = "https://raw.githubusercontent.com";
 
 #[derive(Clone)]
 pub struct GitHubClient {
     client: reqwest::Client,
     token: Option<String>,
+    api_base_url: String,
+    raw_base_url: String,
 }
 
 impl GitHubClient {
     pub fn new(token: Option<String>) -> Self {
+        let api_base_url = std::env::var("GHSS_API_BASE_URL")
+            .unwrap_or_else(|_| GITHUB_API_BASE.to_string());
+        let raw_base_url = std::env::var("GHSS_RAW_BASE_URL")
+            .unwrap_or_else(|_| RAW_CONTENT_BASE.to_string());
         Self {
             client: reqwest::Client::builder()
                 .user_agent("ghss")
                 .build()
                 .expect("failed to build HTTP client"),
             token,
+            api_base_url,
+            raw_base_url,
         }
     }
 
     pub fn has_token(&self) -> bool {
         self.token.is_some()
+    }
+
+    pub fn api_base_url(&self) -> &str {
+        &self.api_base_url
     }
 
     #[instrument(skip(self), fields(action = %action.raw))]
@@ -34,8 +47,9 @@ impl GitHubClient {
         }
 
         // Try as a tag first
+        let api = &self.api_base_url;
         let tag_url = format!(
-            "{GITHUB_API_BASE}/repos/{}/{}/git/ref/tags/{}",
+            "{api}/repos/{}/{}/git/ref/tags/{}",
             action.owner, action.repo, action.git_ref
         );
 
@@ -45,7 +59,7 @@ impl GitHubClient {
 
         // Fall back to branch
         let branch_url = format!(
-            "{GITHUB_API_BASE}/repos/{}/{}/git/ref/heads/{}",
+            "{api}/repos/{}/{}/git/ref/heads/{}",
             action.owner, action.repo, action.git_ref
         );
 
@@ -79,8 +93,9 @@ impl GitHubClient {
 
         // Annotated tag — dereference to get the commit
         if obj_type == "tag" {
+            let api = &self.api_base_url;
             let tag_url = format!(
-                "{GITHUB_API_BASE}/repos/{owner}/{repo}/git/tags/{sha}"
+                "{api}/repos/{owner}/{repo}/git/tags/{sha}"
             );
             let tag_json = self.api_get(&tag_url).await?;
 
@@ -141,8 +156,9 @@ impl GitHubClient {
         git_ref: &str,
         path: &str,
     ) -> Result<String> {
+        let raw_base = &self.raw_base_url;
         let url = format!(
-            "https://raw.githubusercontent.com/{owner}/{repo}/{git_ref}/{path}"
+            "{raw_base}/{owner}/{repo}/{git_ref}/{path}"
         );
 
         let mut request = self.client.get(&url);
@@ -179,9 +195,10 @@ impl GitHubClient {
 
         let body = serde_json::json!({ "query": query });
 
+        let graphql_url = format!("{}/graphql", self.api_base_url);
         let response = self
             .client
-            .post("https://api.github.com/graphql")
+            .post(&graphql_url)
             .header("Authorization", format!("Bearer {token}"))
             .header("Accept", "application/vnd.github+json")
             .json(&body)

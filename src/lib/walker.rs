@@ -142,7 +142,7 @@ impl Walker {
 
                 // Enqueue children for the next frontier if depth allows
                 let should_expand = match self.max_depth {
-                    Some(max) => depth + 1 <= max,
+                    Some(max) => depth < max,
                     None => true,
                 };
 
@@ -223,7 +223,7 @@ mod tests {
             Ok(())
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "mock-child"
         }
     }

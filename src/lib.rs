@@ -51,7 +51,7 @@ impl fmt::Display for ScanSelection {
             ScanSelection::None => write!(f, "none"),
             ScanSelection::All => write!(f, "all"),
             ScanSelection::Indices(indices) => {
-                let parts: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
+                let parts: Vec<String> = indices.iter().map(ToString::to_string).collect();
                 write!(f, "{}", parts.join(","))
             }
         }

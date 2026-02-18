@@ -78,7 +78,7 @@ fn write_node(
         }
         if !scan.ecosystems.is_empty() {
             let eco_list: Vec<String> =
-                scan.ecosystems.iter().map(|e| e.to_string()).collect();
+                scan.ecosystems.iter().map(ToString::to_string).collect();
             writeln!(writer, "{indent}  ecosystems: {}", eco_list.join(", "))?;
         }
     }
