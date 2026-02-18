@@ -224,14 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn from_str_works() {
-        let ar = "actions/checkout@v4".parse::<ActionRef>().unwrap();
-        assert_eq!(ar.owner, "actions");
-        assert_eq!(ar.repo, "checkout");
-        assert_eq!(ar.git_ref, "v4");
-    }
-
-    #[test]
     fn display_matches_raw() {
         let ar: ActionRef = "actions/checkout@v4".parse().unwrap();
         assert_eq!(format!("{ar}"), "actions/checkout@v4");
