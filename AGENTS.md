@@ -59,13 +59,13 @@ src/lib/
 
 ### Module descriptions
 
-- **`lib.rs`** — Top-level public API. Exports `ActionSelection` enum (All, or 1-indexed ranges like `"1-3,5"`), `parse_actions()` free function, and module re-exports from `src/lib/mod.rs`.
+- **`lib.rs`** — Top-level public API. Exports `ActionSelection` enum (All, or 1-indexed ranges like `"1-3,5"`), `parse_actions(yaml: &str)` free function (accepts YAML content, not a file path), and module re-exports from `src/lib/mod.rs`.
 - **`main.rs`** — Clap-derived CLI struct and orchestration. Parses args, assembles the pipeline via `PipelineBuilder`, creates a `Walker`, and runs BFS traversal. See CLI flags below.
 - **`context.rs`** — `AuditContext` struct: the per-action data carrier passed through all pipeline stages. Fields: `action`, `depth`, `parent`, `children`, `resolved_ref`, `advisories`, `scan`, `dependencies`, `errors`. Also defines `StageError`.
 - **`depth.rs`** — `DepthLimit` enum: `Bounded(usize)` or `Unlimited`. Parsed from CLI `--depth` flag. Converts to `Option<usize>` for Walker.
 - **`pipeline.rs`** — `Stage` async trait (`run` + `name`), `Pipeline` (holds `Arc<Vec<Box<dyn Stage>>>`), and `PipelineBuilder` (fluent builder with `.stage()` and `.max_concurrency()`). Stages execute sequentially; errors are captured in `ctx.errors` without halting.
 - **`walker.rs`** — `Walker` struct: BFS traversal engine. Processes each depth frontier concurrently (bounded by `tokio::sync::Semaphore`), runs the pipeline on each node, discovers children from expansion stages, enforces `max_depth`, detects cycles via visited set, and builds an `AuditNode` tree.
-- **`workflow.rs`** — YAML parsing via serde_yaml. Deserializes workflow into `Workflow > Job > Step` structs. `parse_workflow()` returns a `Vec<String>` of all `uses:` values, including duplicates. Malformed jobs emit warnings to stderr but don't fail the parse.
+- **`workflow.rs`** — YAML parsing via serde_yaml. Deserializes workflow into `Workflow > Job > Step` structs. `parse_workflow(yaml: &str)` accepts YAML content and returns a `Vec<String>` of all `uses:` values, including duplicates. Malformed jobs emit warnings to stderr but don't fail the parse.
 - **`action_ref.rs`** — `ActionRef` struct and parsing. Splits `uses:` strings into owner, repo, path, git_ref. Classifies refs as `Sha`, `Tag`, or `Unknown`. Provides `package_name()` and `version()` for advisory lookups.
 - **`github.rs`** — `GitHubClient` HTTP wrapper using `reqwest`. Methods: `resolve_ref()` (tags/branches → SHAs), `get_raw_content()` (fetch files from repos), `api_get()` / `api_get_optional()` (REST), `graphql_post()` (GraphQL). Base URLs configurable via `GHSS_API_BASE_URL` and `GHSS_RAW_BASE_URL` env vars.
 - **`advisory.rs`** — `Advisory` struct (id, aliases, summary, severity, url, affected_range, source) and `deduplicate_advisories()` function that handles cross-provider dedup via ID and alias matching.
@@ -107,7 +107,7 @@ Stages implement the `Stage` trait and execute in this order within the pipeline
 
 1. Parse CLI args → validate input file exists
 2. Initialize tracing (logs to stderr; JSON format if `--json`)
-3. Parse workflow YAML → extract and deduplicate root `ActionRef`s → filter by `--select`
+3. Read workflow file → parse YAML content → extract and deduplicate root `ActionRef`s → filter by `--select`
 4. Create advisory providers based on `--provider`
 5. Assemble pipeline: expansion stages (always) → resolve → advisory → scan (conditional) → dependency (conditional)
 6. Create Walker with pipeline, `max_depth`, and concurrency limit

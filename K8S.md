@@ -13,7 +13,7 @@ Architectural notes for a second binary (`ghss-scanner`) that runs as a long-liv
 
 The existing library API covers almost everything the scanner needs. The pipeline, walker, stages, and providers are all reusable as-is. Required library changes:
 
-- **`parse_actions_from_str(yaml: &str)`** — `parse_workflow` currently requires a file path; the scanner fetches YAML via GitHub API and needs to parse from a string
+- ~~**`parse_actions_from_str(yaml: &str)`**~~ — **Resolved.** `parse_actions` and `parse_workflow` now accept `&str` YAML content directly; file reading is handled by consumers.
 - **`Deserialize` derives** on output types (`AuditNode`, `ActionEntry`, `ActionRef`, `Advisory`, `ScanResult`, `DependencyReport`, etc.) for snapshot round-tripping
 - **`PartialEq`/`Eq` derives** on output types for diffing current vs. previous results
 

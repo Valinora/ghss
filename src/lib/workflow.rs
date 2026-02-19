@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use serde::Deserialize;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 #[derive(Debug, Deserialize)]
 struct Workflow {
@@ -23,10 +22,8 @@ struct Step {
     uses: Option<String>,
 }
 
-#[instrument(skip(path), fields(path = %path.display()))]
-pub fn parse_workflow(path: &Path) -> anyhow::Result<Vec<String>> {
-    let contents = std::fs::read_to_string(path)?;
-    let workflow: Workflow = serde_yaml::from_str(&contents)?;
+pub fn parse_workflow(yaml: &str) -> anyhow::Result<Vec<String>> {
+    let workflow: Workflow = serde_yaml::from_str(yaml)?;
 
     let mut uses_refs = Vec::new();
 
@@ -58,15 +55,16 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn fixture_path(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    fn read_fixture(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
-            .join(name)
+            .join(name);
+        std::fs::read_to_string(path).expect("fixture not found")
     }
 
     #[test]
     fn parse_sample_workflow_extracts_all_uses() {
-        let refs = parse_workflow(&fixture_path("sample-workflow.yml")).unwrap();
+        let refs = parse_workflow(&read_fixture("sample-workflow.yml")).unwrap();
         assert!(refs.contains(&"actions/checkout@v4".to_string()));
         assert!(refs.contains(&"actions/setup-node@v4".to_string()));
         assert!(refs.contains(&"docker://node:18".to_string()));
@@ -76,14 +74,14 @@ mod tests {
 
     #[test]
     fn parse_sample_workflow_includes_duplicates() {
-        let refs = parse_workflow(&fixture_path("sample-workflow.yml")).unwrap();
+        let refs = parse_workflow(&read_fixture("sample-workflow.yml")).unwrap();
         let checkout_count = refs.iter().filter(|r| *r == "actions/checkout@v4").count();
         assert_eq!(checkout_count, 3);
     }
 
     #[test]
     fn parse_malformed_workflow_extracts_valid_jobs() {
-        let refs = parse_workflow(&fixture_path("malformed-workflow.yml")).unwrap();
+        let refs = parse_workflow(&read_fixture("malformed-workflow.yml")).unwrap();
         assert!(refs.contains(&"actions/checkout@v4".to_string()));
         assert!(refs.contains(&"actions/setup-node@v4".to_string()));
         assert!(refs.contains(&"docker://alpine:3.18".to_string()));
@@ -91,19 +89,19 @@ mod tests {
 
     #[test]
     fn parse_malformed_workflow_does_not_fail() {
-        let result = parse_workflow(&fixture_path("malformed-workflow.yml"));
+        let result = parse_workflow(&read_fixture("malformed-workflow.yml"));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn parse_nonexistent_file_returns_error() {
-        let result = parse_workflow(Path::new("nonexistent.yml"));
+    fn parse_invalid_yaml_returns_error() {
+        let result = parse_workflow("not: [valid: yaml: {{{");
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_reusable_workflow_extracts_step_and_job_level_uses() {
-        let refs = parse_workflow(&fixture_path("reusable-workflow.yml")).unwrap();
+        let refs = parse_workflow(&read_fixture("reusable-workflow.yml")).unwrap();
         // Step-level uses
         assert!(refs.contains(&"actions/checkout@v4".to_string()));
         assert!(refs.contains(&"actions/setup-node@v4".to_string()));

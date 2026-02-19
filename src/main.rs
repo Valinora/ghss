@@ -80,7 +80,8 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         bail!("file not found: {}", args.file.display());
     }
 
-    let actions = ghss::parse_actions(&args.file)?;
+    let contents = std::fs::read_to_string(&args.file)?;
+    let actions = ghss::parse_actions(&contents)?;
     let client = GitHubClient::new(args.github_token.clone());
 
     // Filter root actions by --select

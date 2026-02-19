@@ -15,7 +15,6 @@ pub use modules::workflow;
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::bail;
@@ -111,8 +110,8 @@ fn is_third_party(uses: &str) -> bool {
     !uses.starts_with("./") && !uses.starts_with("docker://")
 }
 
-pub fn parse_actions(path: &Path) -> anyhow::Result<Vec<ActionRef>> {
-    let uses_refs = workflow::parse_workflow(path)?;
+pub fn parse_actions(yaml: &str) -> anyhow::Result<Vec<ActionRef>> {
+    let uses_refs = workflow::parse_workflow(yaml)?;
 
     let unique: BTreeSet<ActionRef> = uses_refs
         .into_iter()
