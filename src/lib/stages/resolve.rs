@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tracing::{instrument, warn};
 
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::github::GitHubClient;
 use super::Stage;
 
@@ -23,10 +23,7 @@ impl Stage for RefResolveStage {
             Ok(sha) => ctx.resolved_ref = Some(sha),
             Err(e) => {
                 warn!(action = %ctx.action, error = %e, "failed to resolve ref");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
+                ctx.record_error(self.name(), &e);
             }
         }
         Ok(())

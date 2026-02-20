@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 
 use anyhow::Result;
@@ -7,11 +8,11 @@ use serde_json::Value;
 use tracing::{instrument, warn};
 
 use crate::action_ref::ActionRef;
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::github::GitHubClient;
 use super::Stage;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,
@@ -100,15 +101,12 @@ fn extract_primary_language(repo: &Value) -> Option<String> {
 
 /// Extract ecosystems by checking which manifest file aliases are non-null.
 fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
-    let mut seen = Vec::new();
-
-    for (alias, ecosystem) in MANIFEST_ALIASES {
-        if repo.get(*alias).is_some_and(|v| !v.is_null()) && !seen.contains(ecosystem) {
-            seen.push(ecosystem.clone());
-        }
-    }
-
-    seen
+    let mut seen = HashSet::new();
+    MANIFEST_ALIASES
+        .iter()
+        .filter(|(alias, _)| repo.get(*alias).is_some_and(|v| !v.is_null()))
+        .filter_map(|(_, eco)| seen.insert(*eco).then_some(*eco))
+        .collect()
 }
 
 /// Scan an action's repository to detect languages and package ecosystems.
@@ -148,10 +146,7 @@ impl Stage for ScanStage {
             Ok(s) => ctx.scan = Some(s),
             Err(e) => {
                 warn!(action = %ctx.action, error = %e, "failed to scan action");
-                ctx.errors.push(StageError {
-                    stage: self.name().to_string(),
-                    message: e.to_string(),
-                });
+                ctx.record_error(self.name(), &e);
             }
         }
         Ok(())

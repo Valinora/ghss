@@ -18,7 +18,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use anyhow::bail;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use action_ref::ActionRef;
 
@@ -106,23 +106,12 @@ impl FromStr for ActionSelection {
     }
 }
 
-fn is_third_party(uses: &str) -> bool {
-    !uses.starts_with("./") && !uses.starts_with("docker://")
-}
-
 pub fn parse_actions(yaml: &str) -> anyhow::Result<Vec<ActionRef>> {
-    let uses_refs = workflow::parse_workflow(yaml)?;
+    let refs = workflow::parse_workflow(yaml)?;
 
-    let unique: BTreeSet<ActionRef> = uses_refs
+    let unique: BTreeSet<ActionRef> = refs
         .into_iter()
-        .filter(|u| is_third_party(u))
-        .filter_map(|raw| match raw.parse::<ActionRef>() {
-            Ok(ar) => Some(ar),
-            Err(e) => {
-                warn!(action = %raw, error = %e, "failed to parse action reference");
-                None
-            }
-        })
+        .filter_map(workflow::UsesRef::into_third_party)
         .collect();
 
     debug!(count = unique.len(), "parsed unique third-party actions");
@@ -132,24 +121,6 @@ pub fn parse_actions(yaml: &str) -> anyhow::Result<Vec<ActionRef>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn third_party_actions_are_detected() {
-        assert!(is_third_party("actions/checkout@v4"));
-        assert!(is_third_party("codecov/codecov-action@v3"));
-    }
-
-    #[test]
-    fn local_actions_are_not_third_party() {
-        assert!(!is_third_party("./local-action"));
-        assert!(!is_third_party("./path/to/action"));
-    }
-
-    #[test]
-    fn docker_actions_are_not_third_party() {
-        assert!(!is_third_party("docker://node:18"));
-        assert!(!is_third_party("docker://alpine:3.18"));
-    }
 
     #[test]
     fn action_selection_parse_all() {

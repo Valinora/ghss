@@ -22,10 +22,7 @@ impl Pipeline {
                     error = %e,
                     "stage failed"
                 );
-                ctx.errors.push(crate::context::StageError {
-                    stage: stage.name().to_string(),
-                    message: e.to_string(),
-                });
+                ctx.record_error(stage.name(), &e);
             } else {
                 debug!(stage = stage.name(), action = %ctx.action, "stage complete");
             }

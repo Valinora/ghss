@@ -19,6 +19,15 @@ pub struct AuditContext {
 
 #[derive(Debug, Clone)]
 pub struct StageError {
-    pub stage: String,
+    pub stage: &'static str,
     pub message: String,
+}
+
+impl AuditContext {
+    pub fn record_error(&mut self, stage: &'static str, error: impl std::fmt::Display) {
+        self.errors.push(StageError {
+            stage,
+            message: error.to_string(),
+        });
+    }
 }

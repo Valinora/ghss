@@ -8,7 +8,7 @@ use serde::Serialize;
 use tracing::{debug, instrument, warn};
 
 use crate::advisory::{deduplicate_advisories, Advisory};
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::github::GitHubClient;
 use crate::providers::PackageAdvisoryProvider;
 use super::Ecosystem;
@@ -47,10 +47,7 @@ impl Stage for DependencyStage {
                 Ok(pkgs) => pkgs,
                 Err(e) => {
                     warn!(action = %ctx.action, error = %e, "failed to fetch dependencies");
-                    ctx.errors.push(StageError {
-                        stage: self.name().to_string(),
-                        message: e.to_string(),
-                    });
+                    ctx.record_error(self.name(), &e);
                     return Ok(());
                 }
             };
@@ -81,10 +78,7 @@ impl Stage for DependencyStage {
                             error = %e,
                             "failed to query advisories for npm package"
                         );
-                        ctx.errors.push(StageError {
-                            stage: self.name().to_string(),
-                            message: format!("{provider_name}: {name}: {e}"),
-                        });
+                        ctx.record_error(self.name(), format!("{provider_name}: {name}: {e}"));
                     }
                 }
             }

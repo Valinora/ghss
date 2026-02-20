@@ -5,7 +5,7 @@ use futures::future::join_all;
 use tracing::{debug, instrument, warn};
 
 use crate::advisory::deduplicate_advisories;
-use crate::context::{AuditContext, StageError};
+use crate::context::AuditContext;
 use crate::providers::ActionAdvisoryProvider;
 use super::Stage;
 
@@ -36,10 +36,7 @@ impl Stage for AdvisoryStage {
                 Ok(advs) => advisories.extend(advs),
                 Err(e) => {
                     warn!(action = %ctx.action, provider = %provider_name, error = %e, "failed to query advisories");
-                    ctx.errors.push(StageError {
-                        stage: self.name().to_string(),
-                        message: format!("{provider_name}: {e}"),
-                    });
+                    ctx.record_error(self.name(), format!("{provider_name}: {e}"));
                 }
             }
         }
