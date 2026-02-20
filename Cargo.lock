@@ -469,8 +469,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "clap",
- "clap-verbosity-flag",
  "futures",
  "reqwest",
  "serde",
@@ -478,9 +476,26 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ghss-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap-verbosity-flag",
+ "ghss",
+ "serde_json",
+ "tokio",
+ "tracing",
  "tracing-subscriber",
  "wiremock",
 ]
+
+[[package]]
+name = "ghss-scanner"
+version = "0.1.0"
 
 [[package]]
 name = "h2"

@@ -9,12 +9,12 @@ This file provides guidance to various agents (e.g. claude.ai/code) when working
 ## Build & Test Commands
 
 ```bash
-cargo build                          # Build the project
-cargo test                           # Run all tests (unit + integration)
-cargo test --lib                     # Run unit tests only (in src/)
-cargo test --test integration        # Run integration tests only
-cargo test --test depth_integration  # Run depth integration tests (uses wiremock)
-cargo test <test_name>               # Run a single test by name
+cargo build                                    # Build all workspace crates
+cargo test                                     # Run all tests (unit + integration)
+cargo test -p ghss                             # Run library unit tests only
+cargo test -p ghss-cli --test integration      # Run CLI integration tests only
+cargo test -p ghss-cli --test depth_integration # Run depth integration tests (uses wiremock)
+cargo test <test_name>                         # Run a single test by name
 ```
 
 Rust edition is 2024 — requires a recent nightly or stable Rust toolchain.
@@ -23,43 +23,56 @@ Rust edition is 2024 — requires a recent nightly or stable Rust toolchain.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the original target architecture. The codebase has been migrated to that design. The description below reflects the **current** state.
 
-The crate is organized as `src/lib.rs` (top-level types and orchestration) with submodules in `src/lib/` via `src/lib/mod.rs`:
+The repository is a Cargo workspace with three members:
 
 ### Source layout
 
 ```
-src/lib.rs          — ActionSelection enum, parse_actions(), module re-exports
-src/main.rs         — CLI (Clap), pipeline assembly, Walker execution
-src/lib/
-  mod.rs            — Module declarations and re-exports
-  action_ref.rs     — ActionRef struct, RefType enum, parsing
-  advisory.rs       — Advisory struct, deduplicate_advisories()
-  context.rs        — AuditContext (per-action pipeline state), StageError
-  depth.rs          — DepthLimit enum (Bounded/Unlimited)
-  github.rs         — GitHubClient (REST + GraphQL + raw content)
-  output.rs         — AuditNode tree, TextOutput, JsonOutput formatters
-  pipeline.rs       — Stage trait, Pipeline, PipelineBuilder
-  walker.rs         — Walker BFS traversal (cycle detection, depth, concurrency)
-  workflow.rs       — YAML parsing (Workflow > Job > Step)
-  providers/
-    mod.rs          — ActionAdvisoryProvider + PackageAdvisoryProvider traits, factory fns
-    ghsa.rs         — GhsaProvider (GitHub Advisory DB, actions only)
-    osv.rs          — OsvClient, OsvActionProvider, OsvPackageProvider
-  stages/
-    mod.rs          — Stage re-exports
-    advisory.rs     — AdvisoryStage (parallel provider queries, dedup)
-    composite.rs    — CompositeExpandStage (action.yml parsing → children)
-    resolve.rs      — RefResolveStage (tag/branch → SHA)
-    scan.rs         — ScanStage, Ecosystem enum, ScanResult
-    workflow_expand.rs — WorkflowExpandStage (reusable workflow parsing → children)
-    dependency/
-      mod.rs        — DependencyStage (ecosystem-aware dependency auditing)
-      npm.rs        — NPM package.json fetching and parsing
+Cargo.toml              — Workspace manifest with [workspace.dependencies]
+ghss/                   — Library crate (package name: "ghss")
+  Cargo.toml
+  src/
+    lib.rs              — ActionSelection enum, parse_actions(), pub mod declarations
+    action_ref.rs       — ActionRef struct, RefType enum, parsing
+    advisory.rs         — Advisory struct, deduplicate_advisories()
+    context.rs          — AuditContext (per-action pipeline state), StageError
+    depth.rs            — DepthLimit enum (Bounded/Unlimited)
+    github.rs           — GitHubClient (REST + GraphQL + raw content)
+    output.rs           — AuditNode tree, TextOutput, JsonOutput formatters
+    pipeline.rs         — Stage trait, Pipeline, PipelineBuilder
+    walker.rs           — Walker BFS traversal (cycle detection, depth, concurrency)
+    workflow.rs         — YAML parsing (Workflow > Job > Step)
+    providers/
+      mod.rs            — ActionAdvisoryProvider + PackageAdvisoryProvider traits, factory fns
+      ghsa.rs           — GhsaProvider (GitHub Advisory DB, actions only)
+      osv.rs            — OsvClient, OsvActionProvider, OsvPackageProvider
+    stages/
+      mod.rs            — Stage re-exports
+      advisory.rs       — AdvisoryStage (parallel provider queries, dedup)
+      composite.rs      — CompositeExpandStage (action.yml parsing → children)
+      resolve.rs        — RefResolveStage (tag/branch → SHA)
+      scan.rs           — ScanStage, Ecosystem enum, ScanResult
+      workflow_expand.rs — WorkflowExpandStage (reusable workflow parsing → children)
+      dependency/
+        mod.rs          — DependencyStage (ecosystem-aware dependency auditing)
+        npm.rs          — NPM package.json fetching and parsing
+ghss-cli/               — CLI binary crate (binary name: "ghss")
+  Cargo.toml
+  src/
+    main.rs             — CLI (Clap), pipeline assembly, Walker execution
+  tests/
+    integration.rs      — CLI integration tests (invoke binary, assert stdout/stderr)
+    depth_integration.rs — Depth integration tests (wiremock-based)
+    fixtures/           — YAML workflow fixtures for tests
+ghss-scanner/           — Placeholder for future K8s scanner binary
+  Cargo.toml
+  src/
+    main.rs             — Stub (not yet implemented)
 ```
 
 ### Module descriptions
 
-- **`lib.rs`** — Top-level public API. Exports `ActionSelection` enum (All, or 1-indexed ranges like `"1-3,5"`), `parse_actions(yaml: &str)` free function (accepts YAML content, not a file path), and module re-exports from `src/lib/mod.rs`.
+- **`lib.rs`** — Top-level public API. Exports `ActionSelection` enum (All, or 1-indexed ranges like `"1-3,5"`), `parse_actions(yaml: &str)` free function (accepts YAML content, not a file path), and `pub mod` declarations for all submodules.
 - **`main.rs`** — Clap-derived CLI struct and orchestration. Parses args, assembles the pipeline via `PipelineBuilder`, creates a `Walker`, and runs BFS traversal. See CLI flags below.
 - **`context.rs`** — `AuditContext` struct: the per-action data carrier passed through all pipeline stages. Fields: `action`, `depth`, `parent`, `children`, `resolved_ref`, `advisories`, `scan`, `dependencies`, `errors`. Also defines `StageError`.
 - **`depth.rs`** — `DepthLimit` enum: `Bounded(usize)` or `Unlimited`. Parsed from CLI `--depth` flag. Converts to `Option<usize>` for Walker.
@@ -71,13 +84,13 @@ src/lib/
 - **`advisory.rs`** — `Advisory` struct (id, aliases, summary, severity, url, affected_range, source) and `deduplicate_advisories()` function that handles cross-provider dedup via ID and alias matching.
 - **`output.rs`** — `AuditNode` tree structure (`ActionEntry` + children), `OutputFormatter` trait, `TextOutput` (indented hierarchical text), `JsonOutput` (pretty-printed JSON array). Factory function `formatter(json: bool)`.
 
-### Providers (`src/lib/providers/`)
+### Providers (`ghss/src/providers/`)
 
 - **`mod.rs`** — `ActionAdvisoryProvider` trait (queries by `ActionRef`) and `PackageAdvisoryProvider` trait (queries by package name + ecosystem). Factory functions `create_action_providers()` and `create_package_providers()` accept `"ghsa"`, `"osv"`, or `"all"`.
 - **`ghsa.rs`** — `GhsaProvider` implementing `ActionAdvisoryProvider`. Queries GitHub Advisory API: `GET /advisories?ecosystem=actions&affects={package_name}`.
 - **`osv.rs`** — `OsvClient` (shared HTTP client), `OsvActionProvider` (queries with `"GitHub Actions"` ecosystem), `OsvPackageProvider` (queries with provided ecosystem). All query `POST https://api.osv.dev/v1/query`. Base URL overridable via `GHSS_OSV_BASE_URL` env var.
 
-### Stages (`src/lib/stages/`)
+### Stages (`ghss/src/stages/`)
 
 Stages implement the `Stage` trait and execute in this order within the pipeline:
 
@@ -116,10 +129,10 @@ Stages implement the `Stage` trait and execute in this order within the pipeline
 
 ## Testing
 
-- **Unit tests** live in `#[cfg(test)]` blocks within most source files: `lib.rs`, `workflow.rs`, `action_ref.rs`, `github.rs`, `advisory.rs`, `output.rs`, `context.rs`, `depth.rs`, `pipeline.rs`, `walker.rs`, and files under `providers/` and `stages/`.
-- **Integration tests** in `tests/integration.rs` invoke the compiled binary via `std::process::Command` and assert on stdout/stderr/exit code. Covers parsing, filtering, dedup, malformed input, JSON output, provider flags, and depth flags.
-- **Depth integration tests** in `tests/depth_integration.rs` use `wiremock` to mock GitHub API responses. Tests recursive expansion, depth limiting, scan behavior, advisory display, and dependency vulnerability detection.
-- **Test fixtures** in `tests/fixtures/`:
+- **Unit tests** live in `#[cfg(test)]` blocks within most source files under `ghss/src/`: `lib.rs`, `workflow.rs`, `action_ref.rs`, `github.rs`, `advisory.rs`, `output.rs`, `context.rs`, `depth.rs`, `pipeline.rs`, `walker.rs`, and files under `providers/` and `stages/`.
+- **Integration tests** in `ghss-cli/tests/integration.rs` invoke the compiled binary via `std::process::Command` and assert on stdout/stderr/exit code. Covers parsing, filtering, dedup, malformed input, JSON output, provider flags, and depth flags.
+- **Depth integration tests** in `ghss-cli/tests/depth_integration.rs` use `wiremock` to mock GitHub API responses. Tests recursive expansion, depth limiting, scan behavior, advisory display, and dependency vulnerability detection.
+- **Test fixtures** in `ghss-cli/tests/fixtures/`:
   - `sample-workflow.yml` — Valid workflow with third-party, local, Docker, and duplicate actions
   - `malformed-workflow.yml` — Broken job to test graceful degradation
   - `sha-pinned-workflow.yml` — SHA-pinned + tag-based actions

@@ -1,17 +1,14 @@
-#[path = "lib/mod.rs"]
-mod modules;
-
-pub use modules::action_ref;
-pub use modules::advisory;
-pub use modules::context;
-pub use modules::depth;
-pub use modules::github;
-pub use modules::output;
-pub use modules::pipeline;
-pub use modules::providers;
-pub use modules::stages;
-pub use modules::walker;
-pub use modules::workflow;
+pub mod action_ref;
+pub mod advisory;
+pub mod context;
+pub mod depth;
+pub mod github;
+pub mod output;
+pub mod pipeline;
+pub mod providers;
+pub mod stages;
+pub mod walker;
+pub mod workflow;
 
 use std::collections::BTreeSet;
 use std::fmt;

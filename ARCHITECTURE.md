@@ -103,10 +103,10 @@ impl PackageAdvisoryProvider for OsvPackageProvider {
 
 This pattern applies to any future API that spans multiple provider traits. The shared client is not a provider itself — it is an implementation detail of the providers that use it.
 
-Provider implementations live in `src/lib/providers/`. The module is organized as:
+Provider implementations live in `ghss/src/providers/`. The module is organized as:
 
 ```
-src/lib/providers/
+ghss/src/providers/
   mod.rs       — trait definitions, re-exports
   ghsa.rs      — GhsaProvider (ActionAdvisoryProvider)
   osv.rs       — OsvClient (shared), OsvActionProvider, OsvPackageProvider

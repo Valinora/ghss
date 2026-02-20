@@ -3,6 +3,11 @@ use std::process::Command;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+fn fixture(name: &str) -> String {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    format!("{dir}/tests/fixtures/{name}")
+}
+
 fn ghss() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ghss"))
 }
@@ -139,7 +144,7 @@ async fn depth_0_produces_flat_output() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--depth",
@@ -170,7 +175,7 @@ async fn depth_1_expands_one_level() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--depth",
@@ -209,7 +214,7 @@ async fn depth_unlimited_expands_full_tree() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--depth",
@@ -258,7 +263,7 @@ async fn depth_1_json_omits_grandchildren() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--depth",
@@ -310,7 +315,7 @@ async fn depth_unlimited_json_has_nested_children() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--depth",
@@ -382,7 +387,7 @@ async fn reusable_workflow_includes_job_level_refs() {
         &server,
         &[
             "--file",
-            "tests/fixtures/reusable-workflow.yml",
+            &fixture("reusable-workflow.yml"),
             "--provider",
             "ghsa",
         ],
@@ -419,7 +424,7 @@ async fn local_only_workflow_produces_empty_output() {
         &server,
         &[
             "--file",
-            "tests/fixtures/local-only-workflow.yml",
+            &fixture("local-only-workflow.yml"),
             "--provider",
             "ghsa",
         ],
@@ -488,7 +493,7 @@ async fn deps_shows_language_and_ecosystems() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--deps",
@@ -512,7 +517,7 @@ async fn select_filters_root_actions() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--select",
@@ -540,7 +545,7 @@ async fn select_with_deps() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "ghsa",
             "--select",
@@ -629,7 +634,7 @@ async fn mocked_advisory_appears_in_text_output() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
         ],
     );
 
@@ -654,7 +659,7 @@ async fn mocked_advisory_appears_in_json_output() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--json",
         ],
     );
@@ -811,7 +816,7 @@ async fn deps_flag_shows_dependency_vulnerability() {
         &server,
         &[
             "--file",
-            "tests/fixtures/depth-test-workflow.yml",
+            &fixture("depth-test-workflow.yml"),
             "--provider",
             "all",
             "--deps",

@@ -1,21 +1,18 @@
-[package]
-name = "ghss"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["ghss", "ghss-cli", "ghss-scanner"]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
+clap-verbosity-flag = { version = "3", default-features = false, features = ["tracing"] }
+futures = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
-clap-verbosity-flag = { version = "3", default-features = false, features = ["tracing"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
-reqwest = { version = "0.13", features = ["json"] }
-futures = "0.3"
-async-trait = "0.1"
-
-[dev-dependencies]
 wiremock = "0.6"
