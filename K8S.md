@@ -1,13 +1,14 @@
-# Continuous Scanner (K8s)
+# Continuous Scanner
 
-Architectural notes for a second binary (`ghss-scanner`) that runs as a long-lived k8s workload, continuously auditing GitHub Actions workflows and emitting telemetry about findings and drift.
+Architectural notes for a second binary (`ghss-scanner`) that runs as a long-lived daemon, continuously auditing GitHub Actions workflows and emitting telemetry about findings and drift. Designed to run anywhere (bare metal, Docker, K8s) with K8s as a first-class deployment target.
 
 ## Goals
 
-- Given a set of repos, scan all workflow files on a recurring interval
+- Given a set of repos, scan all workflow files on a recurring cron schedule
 - Detect when resolved SHAs change over time (drift detection)
 - Emit OpenTelemetry traces and metrics about audit findings
-- Keep k8s, persistence, and OTel concerns out of the `ghss` library
+- Support multiple storage backends (SQLite for simple deployments, PostgreSQL for production)
+- Keep persistence, scheduling, and OTel concerns out of the `ghss` library
 
 ## Library Reuse
 
@@ -36,34 +37,73 @@ Consumers can implement custom `Stage`s via the public `#[async_trait] Stage` tr
 
 ## Repo Structure
 
-Cargo workspace with three members — **done.**
+Cargo workspace with four members — **done.**
 
 - `ghss` — library
 - `ghss-cli` — CLI binary
-- `ghss-scanner` — scanner binary (stub only; prints "not yet implemented" and exits)
+- `ghss-scanner` — scanner daemon (dependencies added, implementation not yet started)
+- `ghss-tui` — TUI binary (stub only)
 
 ## Scanner Architecture
 
-Everything below is **not yet implemented.** `ghss-scanner` has no dependencies and no real code.
+Everything below is **not yet implemented.** `ghss-scanner` has its dependencies declared but no real code.
 
 ### Configuration
 
-YAML config file mounted from a ConfigMap. Specifies repos to scan, intervals, pipeline options (depth, provider, deps), and OTel endpoint.
+TOML config file specifying repos to scan, cron schedules, pipeline options, storage backend, and OTel endpoint. The scanner will watch the config file for changes and hot-reload without restart, making it compatible with K8s ConfigMap volume mounts (which propagate updates automatically).
+
+Repos are specified at the repository level with optional workflow filters. Omitting the workflow list scans all workflows discovered via the GitHub Contents API.
+
+```toml
+[scanner]
+github_token = "${GITHUB_TOKEN}"   # env var expansion
+schedule = "*/30 * * * *"          # cron expression
+
+[[repos]]
+owner = "my-org"
+name = "my-app"
+
+[[repos]]
+owner = "my-org"
+name = "my-service"
+workflows = ["ci.yml", "deploy.yml"]  # optional filter
+
+[pipeline]
+depth = "unlimited"
+provider = "all"
+deps = true
+
+[storage]
+url = "sqlite:///data/ghss.db"
+# or: url = "postgresql://user:pass@host/ghss"
+
+[telemetry]
+endpoint = "http://otel-collector:4317"
+
+[health]
+bind = "0.0.0.0:8080"
+```
 
 ### Scan Loop
 
-Per-repo tokio task running on a configurable interval:
+The scanner will run as a long-lived daemon with cron-based scheduling (via the `cron` crate for expression parsing and `tokio::time::sleep_until` for execution). Per scan cycle:
 
-1. List workflow files via GitHub Contents API
+1. List workflow files via GitHub Contents API for each configured repo
 2. Fetch each workflow's YAML via `GitHubClient::get_raw_content`
 3. `parse_actions` → `PipelineBuilder` → `Walker::walk`
-4. Diff results against stored previous state
+4. Diff results against stored previous state (`PartialEq` on output types)
 5. Emit OTel traces/events for findings and changes
-6. Persist current state
+6. Persist current state via `sqlx`
 
 ### Persistence
 
-Embedded SQLite on a PersistentVolume. Stores per-action resolved SHA and advisory IDs — just enough to detect drift and new/resolved advisories between runs.
+`sqlx` with the storage backend determined by the connection URL scheme (`sqlite://` or `postgresql://`). Stores serialized `AuditNode` trees per workflow (leveraging `Serialize`/`Deserialize` derives) and per-action resolved SHAs — enough to detect drift and new/resolved advisories between runs.
+
+SQLite suits single-node and dev deployments (PVC-backed in K8s). PostgreSQL suits production environments with existing database infrastructure, HA requirements, and multi-replica potential.
+
+### Config Hot-Reload
+
+The `notify` + `notify-debouncer-full` crates will watch the config file for changes. On change, the scanner will re-parse the TOML config and reconcile the set of active scan jobs (add new repos, remove deleted ones, update schedules) without restarting the process. In K8s, ConfigMap volume mounts propagate updates within ~60 seconds, so this provides a seamless operator experience.
 
 ### OpenTelemetry
 
@@ -71,19 +111,29 @@ Embedded SQLite on a PersistentVolume. Stores per-action resolved SHA and adviso
 
 **Metrics**: Gauges for active advisory count per repo, counters for SHA drift events, histograms for scan duration.
 
+### Health Endpoints
+
+`axum` will serve HTTP health and readiness endpoints for K8s probes. Readiness will gate on successful config parse and database connectivity. Liveness will confirm the scan loop is not stuck.
+
 ### K8s Deployment
 
-- Deployment (single replica, SQLite is single-writer)
-- ConfigMap for scanner config
-- Secret for GitHub token
-- PersistentVolumeClaim for SQLite
-- Health/readiness HTTP endpoints
+- Deployment (single replica for SQLite; multiple replicas possible with PostgreSQL)
+- ConfigMap for scanner TOML config
+- Secret for GitHub token (referenced via env var in config)
+- PersistentVolumeClaim for SQLite (not needed with PostgreSQL)
+- Health/readiness probes pointing at axum endpoints
 - Graceful SIGTERM shutdown
 
-### New dependencies needed
+### Dependencies
 
-None of these are in the workspace yet:
+All dependencies are declared in `ghss-scanner/Cargo.toml`:
 
-- `rusqlite` or `sqlx` — SQLite persistence
-- `opentelemetry`, `opentelemetry-sdk`, `tracing-opentelemetry` — telemetry
-- `axum` or similar — health/readiness HTTP endpoints
+| Category | Crates |
+|----------|--------|
+| Config | `toml`, `serde`, `clap`, `clap-verbosity-flag` |
+| Scheduling | `cron`, `chrono` |
+| File watching | `notify`, `notify-debouncer-full` |
+| Persistence | `sqlx` (runtime-tokio, sqlite, postgres) |
+| Health endpoints | `axum` |
+| Telemetry | `opentelemetry`, `tracing-opentelemetry` |
+| Core | `ghss`, `tokio`, `tracing`, `tracing-subscriber`, `anyhow` |

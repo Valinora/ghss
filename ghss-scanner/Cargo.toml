@@ -4,3 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow.workspace = true
+axum = "0.8.8"
+chrono = "0.4.44"
+clap.workspace = true
+clap-verbosity-flag.workspace = true
+cron = "0.15.0"
+ghss = { version = "0.1.0", path = "../ghss" }
+notify = "8.2.0"
+notify-debouncer-full = "0.7.0"
+opentelemetry = "0.31.0"
+serde.workspace = true
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres"] }
+tokio.workspace = true
+toml = "1.0.3"
+tracing.workspace = true
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber.workspace = true
