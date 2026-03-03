@@ -14,20 +14,37 @@ Architectural notes for a second binary (`ghss-scanner`) that runs as a long-liv
 The existing library API covers almost everything the scanner needs. The pipeline, walker, stages, and providers are all reusable as-is. Required library changes:
 
 - ~~**`parse_actions_from_str(yaml: &str)`**~~ — **Resolved.** `parse_actions` and `parse_workflow` now accept `&str` YAML content directly; file reading is handled by consumers.
-- **`Deserialize` derives** on output types (`AuditNode`, `ActionEntry`, `ActionRef`, `Advisory`, `ScanResult`, `DependencyReport`, etc.) for snapshot round-tripping
-- **`PartialEq`/`Eq` derives** on output types for diffing current vs. previous results
+- ~~**`Deserialize` derives** on output types (`AuditNode`, `ActionEntry`, `ActionRef`, `Advisory`, `ScanResult`, `DependencyReport`, etc.) for snapshot round-tripping~~ — **Resolved.** All output types now derive `Deserialize`.
+- ~~**`PartialEq`/`Eq` derives** on output types for diffing current vs. previous results~~ — **Resolved.** All output types now derive or implement `PartialEq`/`Eq`.
+
+### Library readiness status
+
+| Type | `Serialize` | `Deserialize` | `PartialEq` | `Eq` | Notes |
+|------|:-:|:-:|:-:|:-:|-------|
+| `AuditNode` | Y | Y | Y | Y | |
+| `ActionEntry` | Y | Y | Y | Y | |
+| `ActionRef` | Y | Y | Y | Y | Manual `PartialEq`/`Eq` impls (not derives) |
+| `RefType` | Y | Y | Y | Y | |
+| `Advisory` | Y | Y | Y | Y | |
+| `ScanResult` | Y | Y | Y | Y | |
+| `Ecosystem` | Y | Y | Y | Y | |
+| `DependencyReport` | Y | Y | Y | Y | |
+
+All library types are now ready for snapshot round-tripping.
 
 Consumers can implement custom `Stage`s via the public `#[async_trait] Stage` trait and plug them into `PipelineBuilder`.
 
 ## Repo Structure
 
-Cargo workspace with three members:
+Cargo workspace with three members — **done.**
 
-- `ghss` — library (current `src/lib.rs` + `src/lib/`)
-- `ghss-cli` — existing CLI binary
-- `ghss-scanner` — new scanner binary
+- `ghss` — library
+- `ghss-cli` — CLI binary
+- `ghss-scanner` — scanner binary (stub only; prints "not yet implemented" and exits)
 
 ## Scanner Architecture
+
+Everything below is **not yet implemented.** `ghss-scanner` has no dependencies and no real code.
 
 ### Configuration
 
@@ -39,7 +56,7 @@ Per-repo tokio task running on a configurable interval:
 
 1. List workflow files via GitHub Contents API
 2. Fetch each workflow's YAML via `GitHubClient::get_raw_content`
-3. `parse_actions_from_str` → `PipelineBuilder` → `Walker::walk`
+3. `parse_actions` → `PipelineBuilder` → `Walker::walk`
 4. Diff results against stored previous state
 5. Emit OTel traces/events for findings and changes
 6. Persist current state
@@ -62,3 +79,11 @@ Embedded SQLite on a PersistentVolume. Stores per-action resolved SHA and adviso
 - PersistentVolumeClaim for SQLite
 - Health/readiness HTTP endpoints
 - Graceful SIGTERM shutdown
+
+### New dependencies needed
+
+None of these are in the workspace yet:
+
+- `rusqlite` or `sqlx` — SQLite persistence
+- `opentelemetry`, `opentelemetry-sdk`, `tracing-opentelemetry` — telemetry
+- `axum` or similar — health/readiness HTTP endpoints

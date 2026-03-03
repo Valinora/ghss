@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::future::join_all;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument, warn};
 
 use crate::advisory::{deduplicate_advisories, Advisory};
@@ -14,7 +14,7 @@ use crate::providers::PackageAdvisoryProvider;
 use super::Ecosystem;
 use super::Stage;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyReport {
     pub package: String,
     pub version: String,

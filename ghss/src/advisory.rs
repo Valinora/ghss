@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Advisory {
     pub id: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
     pub summary: String,
     pub severity: String,

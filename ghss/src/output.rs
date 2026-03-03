@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
@@ -6,16 +6,16 @@ use crate::context::AuditContext;
 use crate::stages::dependency::DependencyReport;
 use crate::stages::ScanResult;
 
-#[derive(Serialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionEntry {
     #[serde(flatten)]
     pub action: ActionRef,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_sha: Option<String>,
     pub advisories: Vec<Advisory>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<ScanResult>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dep_vulnerabilities: Vec<DependencyReport>,
 }
 
@@ -31,11 +31,11 @@ impl From<AuditContext> for ActionEntry {
     }
 }
 
-#[derive(Serialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditNode {
     #[serde(flatten)]
     pub entry: ActionEntry,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<AuditNode>,
 }
 

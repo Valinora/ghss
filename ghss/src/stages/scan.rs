@@ -3,7 +3,7 @@ use std::fmt;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{instrument, warn};
 
@@ -12,7 +12,7 @@ use crate::context::AuditContext;
 use crate::github::GitHubClient;
 use super::Stage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
     Npm,
@@ -42,7 +42,7 @@ impl fmt::Display for Ecosystem {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanResult {
     pub primary_language: Option<String>,
     pub ecosystems: Vec<Ecosystem>,

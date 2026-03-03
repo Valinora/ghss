@@ -4,9 +4,9 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use anyhow::{bail, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RefType {
     Sha,
@@ -24,7 +24,7 @@ impl fmt::Display for RefType {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRef {
     raw: String,
     pub owner: String,
