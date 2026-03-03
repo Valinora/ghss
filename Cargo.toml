@@ -1,5 +1,5 @@
 [workspace]
-members = ["ghss", "ghss-cli", "ghss-scanner"]
+members = ["ghss", "ghss-cli", "ghss-scanner", "ghss-tui"]
 resolver = "3"
 
 [workspace.dependencies]
