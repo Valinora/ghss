@@ -1,6 +1,7 @@
 mod config;
 mod scan;
 mod scheduler;
+mod storage;
 
 use std::path::PathBuf;
 

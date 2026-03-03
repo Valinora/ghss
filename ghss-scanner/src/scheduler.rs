@@ -3,9 +3,11 @@ use std::str::FromStr;
 use anyhow::Context;
 use chrono::Utc;
 use cron::Schedule;
+use ghss::output::AuditNode;
 
-use crate::config::{ScannerConfig, normalize_cron};
+use crate::config::{RepoEntry, ScannerConfig, normalize_cron};
 use crate::scan;
+use crate::storage::{Storage, detect_drift};
 
 #[derive(Debug)]
 pub struct Scheduler {
@@ -31,12 +33,20 @@ impl Scheduler {
 
 /// Run the scan loop. If `once` is true, run one cycle and return.
 /// Otherwise, create a Scheduler and loop on the cron schedule.
+///
+/// Connects to the SQLite database, runs migrations, and persists
+/// scan results after each cycle with drift detection.
 pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> {
+    let storage = Storage::connect(&config.storage.url).await?;
+    storage.migrate().await?;
+
     let mut cycle: u64 = 0;
 
     if once {
         cycle += 1;
-        scan::run_scan_cycle(&config.repos, cycle);
+        let results = scan::run_scan_cycle(&config.repos, cycle);
+        persist_results(&storage, &config.repos, &results, cycle).await?;
+        storage.close().await;
         return Ok(());
     }
 
@@ -52,8 +62,105 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
         tokio::time::sleep(wait).await;
 
         cycle += 1;
-        scan::run_scan_cycle(&config.repos, cycle);
+        let results = scan::run_scan_cycle(&config.repos, cycle);
+        persist_results(&storage, &config.repos, &results, cycle).await?;
     }
+}
+
+/// Persist scan results for all repos, detecting drift against previous findings.
+async fn persist_results(
+    storage: &Storage,
+    _repos: &[RepoEntry],
+    results: &[(String, Vec<AuditNode>)],
+    cycle: u64,
+) -> anyhow::Result<()> {
+    for (repo_id, nodes) in results {
+        let (owner, name) = repo_id
+            .split_once('/')
+            .unwrap_or((repo_id.as_str(), "unknown"));
+
+        let started_at = Utc::now().to_rfc3339();
+
+        // Get previous findings for drift detection
+        let previous = storage.get_latest_findings(owner, name).await?;
+
+        // Build current findings for drift comparison
+        let current_findings: Vec<_> = nodes
+            .iter()
+            .map(|node| crate::storage::FindingRow {
+                action_ref: node.entry.action.to_string(),
+                resolved_sha: node.entry.resolved_sha.clone(),
+            })
+            .collect();
+
+        let drift_events = detect_drift(&previous, &current_findings);
+
+        // Insert scan run
+        let completed_at = Utc::now().to_rfc3339();
+        let run_id = storage
+            .insert_scan_run(owner, name, &started_at, Some(&completed_at), cycle, "completed")
+            .await?;
+
+        // Insert findings
+        for node in nodes {
+            let action_ref_str = node.entry.action.to_string();
+            let advisory_ids: Vec<String> =
+                node.entry.advisories.iter().map(|a| a.id.clone()).collect();
+            let advisory_ids_str = if advisory_ids.is_empty() {
+                None
+            } else {
+                Some(advisory_ids.join(","))
+            };
+            let severity = node
+                .entry
+                .advisories
+                .iter()
+                .map(|a| a.severity.as_str())
+                .next()
+                .map(String::from);
+            let serialized = serde_json::to_string(node)
+                .context("failed to serialize AuditNode")?;
+
+            storage
+                .insert_finding(
+                    run_id,
+                    None,
+                    &action_ref_str,
+                    node.entry.resolved_sha.as_deref(),
+                    advisory_ids_str.as_deref(),
+                    severity.as_deref(),
+                    &serialized,
+                )
+                .await?;
+        }
+
+        // Insert drift events
+        let drift_count = drift_events.len();
+        for event in &drift_events {
+            let detected_at = Utc::now().to_rfc3339();
+            storage
+                .insert_drift_event(
+                    run_id,
+                    &event.action_ref,
+                    &event.previous_sha,
+                    &event.current_sha,
+                    &detected_at,
+                )
+                .await?;
+        }
+
+        tracing::info!(
+            repo = %repo_id,
+            findings = nodes.len(),
+            drift_events = drift_count,
+            "Persisted {} findings, {} drift event(s) for {}",
+            nodes.len(),
+            drift_count,
+            repo_id
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
