@@ -15,6 +15,7 @@ notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 opentelemetry = "0.31.0"
 serde.workspace = true
+serde_json.workspace = true
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres"] }
 tokio.workspace = true
 toml = "1.0.3"

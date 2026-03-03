@@ -1,12 +1,14 @@
 mod config;
+mod scan;
+mod scheduler;
 
 use std::path::PathBuf;
 
 use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
-/// Kubernetes-native GitHub Actions supply-chain scanner
+/// GitHub Actions supply-chain scanner
 #[derive(Parser)]
 #[command(name = "ghss-scanner", version)]
 struct Cli {
@@ -49,5 +51,5 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!(?config_path, github_token = token_status, "Config loaded");
     tracing::debug!(?config, "Parsed config");
 
-    Ok(())
+    scheduler::run_loop(&config, args.once).await
 }
