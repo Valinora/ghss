@@ -43,6 +43,10 @@ struct Cli {
     #[arg(long)]
     deps: bool,
 
+    /// Fail with exit code 2 if any advisory meets or exceeds this severity (critical, high, medium, low)
+    #[arg(long, value_name = "LEVEL")]
+    fail_on_severity: Option<ghss::advisory::Severity>,
+
     /// GitHub personal access token (or set `GITHUB_TOKEN` env var)
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
@@ -52,7 +56,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let args = Cli::parse();
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -72,10 +76,16 @@ async fn main() -> anyhow::Result<()> {
         base.init();
     }
 
-    run(&args).await
+    match run(&args).await {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            std::process::exit(1);
+        }
+    }
 }
 
-async fn run(args: &Cli) -> anyhow::Result<()> {
+async fn run(args: &Cli) -> anyhow::Result<i32> {
     if !args.file.exists() {
         bail!("file not found: {}", args.file.display());
     }
@@ -127,5 +137,20 @@ async fn run(args: &Cli) -> anyhow::Result<()> {
         .write_results(&nodes, &mut std::io::stdout().lock())
         .expect("failed to write output");
 
-    Ok(())
+    if let Some(threshold) = args.fail_on_severity {
+        let violations = output::collect_severity_violations(&nodes, threshold);
+        if !violations.is_empty() {
+            eprintln!(
+                "\n{} advisory violation(s) at or above {threshold} severity:\n",
+                violations.len()
+            );
+            for v in &violations {
+                eprintln!("  {} - {} ({}): {}", v.action, v.advisory_id, v.severity, v.summary);
+            }
+            eprintln!();
+            return Ok(2);
+        }
+    }
+
+    Ok(0)
 }

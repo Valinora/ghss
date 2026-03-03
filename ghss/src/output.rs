@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::action_ref::ActionRef;
-use crate::advisory::Advisory;
+use crate::advisory::{Advisory, Severity};
 use crate::context::AuditContext;
 use crate::stages::dependency::DependencyReport;
 use crate::stages::ScanResult;
@@ -136,6 +136,65 @@ impl OutputFormatter for JsonOutput {
         serde_json::to_writer_pretty(&mut *writer, nodes)?;
         writeln!(writer)?;
         Ok(())
+    }
+}
+
+pub struct SeverityViolation {
+    pub action: String,
+    pub advisory_id: String,
+    pub severity: String,
+    pub summary: String,
+}
+
+pub fn collect_severity_violations(
+    nodes: &[AuditNode],
+    threshold: Severity,
+) -> Vec<SeverityViolation> {
+    let mut violations = Vec::new();
+    for node in nodes {
+        collect_violations_recursive(node, threshold, &mut violations);
+    }
+    violations
+}
+
+fn collect_violations_recursive(
+    node: &AuditNode,
+    threshold: Severity,
+    violations: &mut Vec<SeverityViolation>,
+) {
+    let action_name = node.entry.action.to_string();
+
+    for adv in &node.entry.advisories {
+        if let Some(sev) = adv.parsed_severity() {
+            if sev >= threshold {
+                violations.push(SeverityViolation {
+                    action: action_name.clone(),
+                    advisory_id: adv.id.clone(),
+                    severity: adv.severity.clone(),
+                    summary: adv.summary.clone(),
+                });
+            }
+        }
+    }
+
+    for dep in &node.entry.dep_vulnerabilities {
+        let dep_action = format!("{} -> {}@{}", action_name, dep.package, dep.version);
+        for adv in &dep.advisories {
+            if let Some(sev) = adv.parsed_severity() {
+                if sev >= threshold {
+                    violations.push(SeverityViolation {
+                        action: dep_action.clone(),
+                        advisory_id: adv.id.clone(),
+                        severity: adv.severity.clone(),
+                        summary: adv.summary.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    for child in &node.children {
+        collect_violations_recursive(child, threshold, violations);
     }
 }
 
@@ -717,5 +776,129 @@ mod tests {
         assert!(output.contains("    dependency vulnerabilities:"));
         assert!(output.contains("      lodash@4.17.20 (npm):"));
         assert!(output.contains("        GHSA-dep1"));
+    }
+
+    // --- collect_severity_violations tests ---
+
+    #[test]
+    fn violations_finds_matching_advisories() {
+        let nodes = vec![leaf_node(ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![Advisory {
+                id: "GHSA-1111".to_string(),
+                aliases: vec![],
+                summary: "Bad thing".to_string(),
+                severity: "high".to_string(),
+                url: "https://example.com".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: None,
+            dep_vulnerabilities: vec![],
+        })];
+        let violations = collect_severity_violations(&nodes, Severity::High);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].advisory_id, "GHSA-1111");
+        assert_eq!(violations[0].action, "actions/checkout@v4");
+    }
+
+    #[test]
+    fn violations_skips_below_threshold() {
+        let nodes = vec![leaf_node(ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![Advisory {
+                id: "GHSA-2222".to_string(),
+                aliases: vec![],
+                summary: "Minor issue".to_string(),
+                severity: "medium".to_string(),
+                url: "https://example.com".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: None,
+            dep_vulnerabilities: vec![],
+        })];
+        let violations = collect_severity_violations(&nodes, Severity::High);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn violations_includes_dependency_advisories() {
+        use crate::stages::dependency::DependencyReport;
+        use crate::stages::Ecosystem;
+
+        let nodes = vec![leaf_node(ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![],
+            scan: None,
+            dep_vulnerabilities: vec![DependencyReport {
+                package: "lodash".to_string(),
+                version: "4.17.20".to_string(),
+                ecosystem: Ecosystem::Npm,
+                advisories: vec![Advisory {
+                    id: "GHSA-dep1".to_string(),
+                    aliases: vec![],
+                    summary: "Prototype pollution".to_string(),
+                    severity: "high".to_string(),
+                    url: "https://example.com".to_string(),
+                    affected_range: None,
+                    source: "osv".to_string(),
+                }],
+            }],
+        })];
+        let violations = collect_severity_violations(&nodes, Severity::High);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].action.contains("lodash@4.17.20"));
+    }
+
+    #[test]
+    fn violations_skips_unknown_severity() {
+        let nodes = vec![leaf_node(ActionEntry {
+            action: sample_action(),
+            resolved_sha: None,
+            advisories: vec![Advisory {
+                id: "GHSA-3333".to_string(),
+                aliases: vec![],
+                summary: "Weird one".to_string(),
+                severity: "moderate".to_string(),
+                url: "https://example.com".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: None,
+            dep_vulnerabilities: vec![],
+        })];
+        let violations = collect_severity_violations(&nodes, Severity::Low);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn violations_recurses_into_children() {
+        let child = leaf_node(ActionEntry {
+            action: "actions/setup-node@v4".parse::<ActionRef>().unwrap(),
+            resolved_sha: None,
+            advisories: vec![Advisory {
+                id: "GHSA-child".to_string(),
+                aliases: vec![],
+                summary: "Child issue".to_string(),
+                severity: "critical".to_string(),
+                url: "https://example.com".to_string(),
+                affected_range: None,
+                source: "ghsa".to_string(),
+            }],
+            scan: None,
+            dep_vulnerabilities: vec![],
+        });
+        let nodes = vec![AuditNode {
+            entry: sample_entry(),
+            children: vec![child],
+        }];
+        let violations = collect_severity_violations(&nodes, Severity::Critical);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].advisory_id, "GHSA-child");
+        assert_eq!(violations[0].action, "actions/setup-node@v4");
     }
 }

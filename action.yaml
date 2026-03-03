@@ -1,0 +1,89 @@
+name: 'GHSS - GitHub Supply-chain Security Audit'
+description: 'Audit GitHub Actions workflows for supply-chain vulnerabilities'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  severity-threshold:
+    description: 'Minimum severity to fail on: critical, high, medium, low'
+    required: true
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+  provider:
+    description: 'Advisory provider: ghsa, osv, all'
+    required: false
+    default: 'all'
+  depth:
+    description: 'Recursive expansion depth (0 = flat, integer, or "unlimited")'
+    required: false
+    default: '0'
+  deps:
+    description: 'Scan dependencies for known vulnerabilities (true/false)'
+    required: false
+    default: 'false'
+  version:
+    description: 'ghss release version to download (e.g. "v0.1.0" or "latest")'
+    required: false
+    default: 'latest'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Determine workflow file path
+      id: workflow-path
+      shell: bash
+      run: |
+        # Extract workflow file path from github.workflow_ref
+        # Format: owner/repo/.github/workflows/file.yml@ref
+        workflow_ref="${{ github.workflow_ref }}"
+        # Strip @ref suffix
+        without_ref="${workflow_ref%%@*}"
+        # Strip owner/repo/ prefix
+        repo="${{ github.repository }}"
+        workflow_file="${without_ref#"$repo/"}"
+        echo "path=${workflow_file}" >> "$GITHUB_OUTPUT"
+
+    - name: Determine binary architecture
+      id: arch
+      shell: bash
+      run: |
+        arch="$(uname -m)"
+        case "$arch" in
+          x86_64)  binary="ghss-linux-amd64" ;;
+          aarch64) binary="ghss-linux-arm64" ;;
+          *)       echo "::error::Unsupported architecture: $arch"; exit 1 ;;
+        esac
+        echo "binary=${binary}" >> "$GITHUB_OUTPUT"
+
+    - name: Download ghss binary
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        version="${{ inputs.version }}"
+        if [ "$version" = "latest" ]; then
+          gh release download --repo valinora/ghss --pattern "${{ steps.arch.outputs.binary }}" --dir /tmp/ghss
+        else
+          gh release download "$version" --repo valinora/ghss --pattern "${{ steps.arch.outputs.binary }}" --dir /tmp/ghss
+        fi
+        chmod +x "/tmp/ghss/${{ steps.arch.outputs.binary }}"
+        mv "/tmp/ghss/${{ steps.arch.outputs.binary }}" /tmp/ghss/ghss
+
+    - name: Run ghss audit
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        args=(
+          --file "${{ steps.workflow-path.outputs.path }}"
+          --provider "${{ inputs.provider }}"
+          --depth "${{ inputs.depth }}"
+          --fail-on-severity "${{ inputs.severity-threshold }}"
+        )
+        if [ "${{ inputs.deps }}" = "true" ]; then
+          args+=(--deps)
+        fi
+        /tmp/ghss/ghss "${args[@]}"

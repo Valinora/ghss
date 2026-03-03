@@ -386,3 +386,39 @@ fn depth_demo_expands_reusable_workflow_at_depth_1() {
         "reusable workflow should have indented child actions at depth 1"
     );
 }
+
+// ── --fail-on-severity tests ──
+
+#[test]
+fn fail_on_severity_flag_is_accepted() {
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--fail-on-severity",
+        "critical",
+    ]);
+    assert!(
+        output.status.success(),
+        "--fail-on-severity critical should be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn fail_on_severity_rejects_invalid_value() {
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--fail-on-severity",
+        "bogus",
+    ]);
+    assert!(
+        !output.status.success(),
+        "--fail-on-severity bogus should fail"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("unknown severity"),
+        "error should mention unknown severity, got: {stderr}"
+    );
+}

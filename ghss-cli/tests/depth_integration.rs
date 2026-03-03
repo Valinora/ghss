@@ -836,3 +836,135 @@ async fn deps_flag_shows_dependency_vulnerability() {
         "should show lodash advisory ID, got:\n{stdout}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// --fail-on-severity tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fail_on_severity_exits_2_when_threshold_met() {
+    let server = setup_advisory_mock_server().await;
+    let output = run_ghss_with_mock(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--fail-on-severity",
+            "high",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "should exit 2 when advisory meets threshold"
+    );
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("GHSA-test-adv1-0001"),
+        "stdout should still contain the advisory, got:\n{stdout}"
+    );
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("advisory violation"),
+        "stderr should contain violation summary, got:\n{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn fail_on_severity_exits_0_when_below_threshold() {
+    let server = setup_advisory_mock_server().await;
+    let output = run_ghss_with_mock(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--fail-on-severity",
+            "critical",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "should exit 0 when advisory (high) is below threshold (critical), stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn fail_on_severity_exits_0_without_flag() {
+    let server = setup_advisory_mock_server().await;
+    let output = run_ghss_with_mock(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "should exit 0 without --fail-on-severity flag, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn fail_on_severity_checks_dependency_advisories() {
+    let server = setup_deps_mock_server().await;
+    let output = run_ghss_with_mock_and_token(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--provider",
+            "all",
+            "--deps",
+            "--fail-on-severity",
+            "high",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "should exit 2 when dependency advisory meets threshold, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("lodash"),
+        "violation summary should mention lodash, got:\n{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn fail_on_severity_still_outputs_json() {
+    let server = setup_advisory_mock_server().await;
+    let output = run_ghss_with_mock(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--json",
+            "--fail-on-severity",
+            "high",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "should exit 2 when threshold met"
+    );
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should still be valid JSON");
+    assert!(parsed.is_array(), "should be a JSON array");
+}
