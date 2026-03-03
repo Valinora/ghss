@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::process::Command;
 
 use sqlx::sqlite::SqlitePoolOptions;
@@ -10,11 +10,15 @@ fn scanner_bin() -> Command {
 }
 
 fn write_config(db_path: &str) -> NamedTempFile {
+    write_config_with_schedule(db_path, "*/30 * * * *")
+}
+
+fn write_config_with_schedule(db_path: &str, schedule: &str) -> NamedTempFile {
     let config = format!(
         r#"
 [scanner]
 github_token = "ghp_test123"
-schedule = "*/30 * * * *"
+schedule = "{schedule}"
 
 [[repos]]
 owner = "my-org"
@@ -112,6 +116,153 @@ async fn once_mode_persists_to_sqlite() {
         drift_count >= 0,
         "drift_events table should exist"
     );
+
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn daemon_mode_sigterm_graceful_shutdown() {
+    let tmp_dir = TempDir::new().unwrap();
+    let db_path = tmp_dir.path().join("daemon.db");
+    let db_path_str = db_path.to_str().unwrap();
+
+    // Use every-second schedule so we don't have to wait long
+    let config_file = write_config_with_schedule(db_path_str, "* * * * * *");
+
+    // Start in daemon mode (no --once)
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ghss-scanner"))
+        .args(["--config", config_file.path().to_str().unwrap(), "-vv"])
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to start ghss-scanner");
+
+    let pid = child.id() as i32;
+    let stderr_handle = child.stderr.take().unwrap();
+
+    // Collect stderr in a background thread so we don't block the main thread
+    let reader_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr_handle);
+        let mut lines = Vec::new();
+        for line in reader.lines() {
+            match line {
+                Ok(l) => lines.push(l),
+                Err(_) => break,
+            }
+        }
+        lines
+    });
+
+    // Wait enough time for at least one scan cycle to complete
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    // Send SIGTERM
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+
+    let status = child.wait().expect("failed to wait for child");
+    let stderr_lines = reader_thread.join().expect("stderr reader thread panicked");
+    let stderr_output = stderr_lines.join("\n");
+
+    assert!(
+        status.success(),
+        "expected exit code 0 after SIGTERM, got: {status}\nstderr:\n{stderr_output}"
+    );
+    assert!(
+        stderr_output.contains("Persisted"),
+        "expected scan cycle completion in stderr:\n{stderr_output}"
+    );
+    assert!(
+        stderr_output.contains("shutting down"),
+        "expected shutdown message in stderr:\n{stderr_output}"
+    );
+    assert!(
+        stderr_output.contains("Shutdown complete"),
+        "expected shutdown complete message in stderr:\n{stderr_output}"
+    );
+}
+
+#[tokio::test]
+async fn once_mode_full_lifecycle() {
+    let tmp_dir = TempDir::new().unwrap();
+    let db_path = tmp_dir.path().join("lifecycle.db");
+    let db_path_str = db_path.to_str().unwrap();
+
+    let config_file = write_config(db_path_str);
+
+    // Run --once with verbose logging
+    let output = scanner_bin()
+        .args(["--once", "--config", config_file.path().to_str().unwrap(), "-vv"])
+        .output()
+        .expect("failed to run ghss-scanner");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Assert clean exit
+    assert!(
+        output.status.success(),
+        "scanner exited with error: {stderr}"
+    );
+
+    // Verify lifecycle logs: config parsing, migration, scan cycle, persistence
+    assert!(
+        stderr.contains("Config loaded"),
+        "expected 'Config loaded' in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("migrations applied"),
+        "expected migration log in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Scanning"),
+        "expected scan cycle log in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Persisted"),
+        "expected persistence log in stderr:\n{stderr}"
+    );
+
+    // Verify SQLite has correct data
+    let pool = SqlitePoolOptions::new()
+        .connect(&format!("sqlite://{db_path_str}"))
+        .await
+        .expect("failed to open test database");
+
+    // scan_runs should have exactly 1 row
+    let scan_run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(scan_run_count, 1, "expected exactly 1 scan run");
+
+    // findings should have rows
+    let findings_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM findings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(findings_count > 0, "expected findings rows");
+
+    // Verify the scan run details
+    let row = sqlx::query("SELECT repo_owner, repo_name, cycle_number, status FROM scan_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>("repo_owner"), "my-org");
+    assert_eq!(row.get::<String, _>("repo_name"), "my-app");
+    assert_eq!(row.get::<i64, _>("cycle_number"), 1);
+    assert_eq!(row.get::<String, _>("status"), "completed");
+
+    // Verify each finding has valid serialized JSON
+    let findings = sqlx::query("SELECT serialized_node FROM findings")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    for finding in &findings {
+        let json_str: String = finding.get("serialized_node");
+        serde_json::from_str::<serde_json::Value>(&json_str)
+            .expect("serialized_node should be valid JSON");
+    }
 
     pool.close().await;
 }

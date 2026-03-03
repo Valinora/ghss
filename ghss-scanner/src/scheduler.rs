@@ -32,7 +32,8 @@ impl Scheduler {
 }
 
 /// Run the scan loop. If `once` is true, run one cycle and return.
-/// Otherwise, create a Scheduler and loop on the cron schedule.
+/// Otherwise, create a Scheduler and loop on the cron schedule with
+/// graceful shutdown on SIGTERM/SIGINT.
 ///
 /// Connects to the SQLite database, runs migrations, and persists
 /// scan results after each cycle with drift detection.
@@ -52,6 +53,11 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
 
     let scheduler = Scheduler::new(&config.scanner.schedule)?;
 
+    // Set up signal handlers for graceful shutdown
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("failed to register SIGTERM handler")?;
+
     loop {
         let next = scheduler.next_tick();
         let now = Utc::now();
@@ -59,12 +65,28 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
             .to_std()
             .unwrap_or(std::time::Duration::ZERO);
         tracing::info!(next = %next, wait_secs = wait.as_secs(), "Waiting for next scheduled run");
-        tokio::time::sleep(wait).await;
+
+        // Race the cron sleep against shutdown signals
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received shutdown signal, shutting down...");
+                break;
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("Received shutdown signal, shutting down...");
+                break;
+            }
+        }
 
         cycle += 1;
         let results = scan::run_scan_cycle(&config.repos, cycle);
         persist_results(&storage, &config.repos, &results, cycle).await?;
     }
+
+    storage.close().await;
+    tracing::info!("Shutdown complete");
+    Ok(())
 }
 
 /// Persist scan results for all repos, detecting drift against previous findings.

@@ -17,13 +17,15 @@ opentelemetry = "0.31.0"
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "migrate"] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 toml = "1.0.3"
 tracing.workspace = true
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+libc = "0.2"
+serde_json = { workspace = true }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

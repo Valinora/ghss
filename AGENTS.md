@@ -155,3 +155,7 @@ Stages implement the `Stage` trait and execute in this order within the pipeline
 - `anyhow` — Error handling
 - `tracing` + `tracing-subscriber` (fmt, env-filter, json) — Structured logging
 - `wiremock` 0.6 (dev) — HTTP mocking for integration tests
+
+## SDD Workflow Overrides
+
+The SDD skills (`/SDD-3-manage-tasks`, `/SDD-4-validate-spec-implementation`, etc.) instruct you to commit spec and proof artifacts from `docs/specs/`. **Do not commit the `docs/` directory in this repo.** Only commit source code, tests, config, and lockfile changes. Spec files, task lists, and proof artifacts are local working documents and should remain untracked.

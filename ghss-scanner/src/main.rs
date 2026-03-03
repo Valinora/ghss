@@ -41,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
         .without_time()
         .init();
 
+    // Resolve and parse config
     let config_path = config::resolve_config_path(args.config.as_deref())?;
     let config = config::ScannerConfig::from_file(&config_path)?;
 
@@ -52,5 +53,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!(?config_path, github_token = token_status, "Config loaded");
     tracing::debug!(?config, "Parsed config");
 
+    // Enter scan loop (handles DB connect, migrations, scheduling, signal handling, cleanup)
     scheduler::run_loop(&config, args.once).await
 }
