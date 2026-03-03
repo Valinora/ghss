@@ -1,0 +1,26 @@
+[scanner]
+github_token = "ghp_test123"
+schedule = "*/30 * * * *"
+
+[[repos]]
+owner = "my-org"
+name = "my-app"
+
+[[repos]]
+owner = "my-org"
+name = "my-service"
+workflows = ["ci.yml", "deploy.yml"]
+
+[pipeline]
+depth = "unlimited"
+provider = "all"
+deps = true
+
+[storage]
+url = "sqlite:///tmp/ghss-test.db"
+
+[telemetry]
+endpoint = "http://otel-collector:4317"
+
+[health]
+bind = "0.0.0.0:8080"

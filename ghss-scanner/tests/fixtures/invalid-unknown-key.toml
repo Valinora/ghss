@@ -1,0 +1,15 @@
+[scanner]
+schedule = "0 * * * *"
+unknown_key = "should fail"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"

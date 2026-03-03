@@ -1,0 +1,14 @@
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "ghsa"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss-minimal.db"

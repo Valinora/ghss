@@ -1,0 +1,14 @@
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "mysql://localhost/db"
