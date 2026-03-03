@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::Context;
@@ -116,6 +117,30 @@ async fn persist_results(
             .collect();
 
         let drift_events = detect_drift(&previous, &current_findings);
+
+        // Log per-finding status markers
+        let prev_map: HashMap<&str, Option<&str>> = previous
+            .iter()
+            .map(|f| (f.action_ref.as_str(), f.resolved_sha.as_deref()))
+            .collect();
+        for finding in &current_findings {
+            let sha_display = finding
+                .resolved_sha
+                .as_deref()
+                .map(|s| &s[..s.len().min(7)])
+                .unwrap_or("none");
+            match prev_map.get(finding.action_ref.as_str()) {
+                None => {
+                    tracing::info!("[NEW]    {}    (sha: {})", finding.action_ref, sha_display);
+                }
+                Some(prev_sha) if *prev_sha != finding.resolved_sha.as_deref() => {
+                    tracing::info!("[DRIFT]  {}    (sha: {})", finding.action_ref, sha_display);
+                }
+                Some(_) => {
+                    tracing::info!("[CACHED] {}    (sha: {})", finding.action_ref, sha_display);
+                }
+            }
+        }
 
         // Insert scan run
         let completed_at = Utc::now().to_rfc3339();
