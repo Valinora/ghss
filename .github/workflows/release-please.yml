@@ -1,0 +1,281 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. v1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
+        id: release
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Resolve release outputs
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=${{ steps.release.outputs.releases_created }}" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${{ steps.release.outputs['ghss--tag_name'] }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-cli:
+    needs: release-please
+    if: needs.release-please.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: ghss-linux-amd64
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            artifact: ghss-linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            artifact: ghss-darwin-arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: release-${{ matrix.target }}
+          cache-all-crates: "true"
+
+      - name: Build CLI binary
+        run: cargo build --release --package ghss-cli --target ${{ matrix.target }}
+
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/ghss ${{ matrix.artifact }}
+
+      - name: Attest CLI binary
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  build-docker-amd64:
+    needs: release-please
+    if: needs.release-please.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/valinora/ghss-scanner
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ghss-scanner/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-amd64
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=docker-linux/amd64
+          cache-to: type=gha,scope=docker-linux/amd64,mode=max
+
+      - name: Attest Docker image
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/valinora/ghss-scanner
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: false
+
+  build-docker-arm64:
+    needs: release-please
+    if: needs.release-please.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/valinora/ghss-scanner
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ghss-scanner/Dockerfile
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=docker-linux/arm64
+          cache-to: type=gha,scope=docker-linux/arm64,mode=max
+
+      - name: Attest Docker image
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/valinora/ghss-scanner
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: false
+
+  merge-docker:
+    runs-on: ubuntu-latest
+    needs: [release-please, build-docker-amd64, build-docker-arm64]
+    if: needs.release-please.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse version from tag
+        id: version
+        run: |
+          TAG="${{ needs.release-please.outputs.tag_name }}"
+          VERSION="${TAG#v}"
+          echo "major=${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+          REST="${VERSION#*.}"
+          echo "minor=${REST%%.*}" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/valinora/ghss-scanner
+          tags: |
+            type=sha,format=short,prefix=
+            type=raw,value=v${{ steps.version.outputs.major }}
+            type=raw,value=v${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}
+            type=raw,value=v${{ steps.version.outputs.version }}
+
+      - name: Create multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-amd64 \
+            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-arm64
+
+      - name: Inspect manifest
+        id: inspect
+        run: |
+          docker buildx imagetools inspect \
+            "ghcr.io/valinora/ghss-scanner:$(echo "$DOCKER_METADATA_OUTPUT_JSON" | jq -r '.tags[0]' | cut -d: -f2)" \
+            --format '{{json .Manifest}}' | jq -r '.digest' > /tmp/manifest-digest
+          echo "digest=$(cat /tmp/manifest-digest)" >> "$GITHUB_OUTPUT"
+
+      - name: Attest manifest
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/valinora/ghss-scanner
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
+  release-assets:
+    runs-on: ubuntu-latest
+    needs: [release-please, build-cli, merge-docker]
+    if: needs.release-please.outputs.should_release == 'true'
+    steps:
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          pattern: ghss-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum ghss-* > checksums-sha256.txt
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" ghss-* checksums-sha256.txt --repo "$GITHUB_REPOSITORY"

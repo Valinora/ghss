@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "Group Rust dependency updates",
+      "matchManagers": ["cargo"],
+      "groupName": "rust-dependencies"
+    }
+  ],
+  "cargo": {
+    "lockFileMaintenance": { "enabled": true }
+  }
+}

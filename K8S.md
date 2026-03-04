@@ -37,12 +37,11 @@ Consumers can implement custom `Stage`s via the public `#[async_trait] Stage` tr
 
 ## Repo Structure
 
-Cargo workspace with four members — **done.**
+Cargo workspace with three members — **done.**
 
 - `ghss` — library
 - `ghss-cli` — CLI binary
 - `ghss-scanner` — scanner daemon (dependencies added, implementation not yet started)
-- `ghss-tui` — TUI binary (stub only)
 
 ## Scanner Architecture
 
