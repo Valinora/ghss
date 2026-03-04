@@ -1,7 +1,7 @@
 use crate::action_ref::ActionRef;
 use crate::advisory::Advisory;
-use crate::stages::dependency::DependencyReport;
 use crate::stages::ScanResult;
+use crate::stages::dependency::DependencyReport;
 
 #[derive(Debug)]
 pub struct AuditContext {

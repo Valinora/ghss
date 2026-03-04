@@ -1,8 +1,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::Command;
 
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
+use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::{NamedTempFile, TempDir};
 
 fn scanner_bin() -> Command {
@@ -48,7 +48,12 @@ async fn once_mode_persists_to_sqlite() {
 
     // Run the scanner in --once mode
     let output = scanner_bin()
-        .args(["--once", "--config", config_file.path().to_str().unwrap(), "-vv"])
+        .args([
+            "--once",
+            "--config",
+            config_file.path().to_str().unwrap(),
+            "-vv",
+        ])
         .output()
         .expect("failed to run ghss-scanner");
 
@@ -102,7 +107,10 @@ async fn once_mode_persists_to_sqlite() {
     let action_ref: String = finding.get("action_ref");
     let serialized: String = finding.get("serialized_node");
     assert!(!action_ref.is_empty(), "action_ref should not be empty");
-    assert!(!serialized.is_empty(), "serialized_node should not be empty");
+    assert!(
+        !serialized.is_empty(),
+        "serialized_node should not be empty"
+    );
     // Verify serialized_node is valid JSON
     serde_json::from_str::<serde_json::Value>(&serialized)
         .expect("serialized_node should be valid JSON");
@@ -112,10 +120,7 @@ async fn once_mode_persists_to_sqlite() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(
-        drift_count >= 0,
-        "drift_events table should exist"
-    );
+    assert!(drift_count >= 0, "drift_events table should exist");
 
     pool.close().await;
 }
@@ -193,7 +198,12 @@ async fn once_mode_full_lifecycle() {
 
     // Run --once with verbose logging
     let output = scanner_bin()
-        .args(["--once", "--config", config_file.path().to_str().unwrap(), "-vv"])
+        .args([
+            "--once",
+            "--config",
+            config_file.path().to_str().unwrap(),
+            "-vv",
+        ])
         .output()
         .expect("failed to run ghss-scanner");
 

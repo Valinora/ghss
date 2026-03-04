@@ -10,15 +10,16 @@ fn ghss() -> Command {
 }
 
 fn run_ghss(args: &[&str]) -> std::process::Output {
-    ghss()
-        .args(args)
-        .output()
-        .expect("failed to execute")
+    ghss().args(args).output().expect("failed to execute")
 }
 
 fn stdout_of(args: &[&str]) -> String {
     let output = run_ghss(args);
-    assert!(output.status.success(), "command failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).unwrap()
 }
 
@@ -31,10 +32,7 @@ fn stderr_of(args: &[&str]) -> String {
 #[test]
 fn sample_workflow_lists_sorted_third_party_actions() {
     let stdout = stdout_of(&["--file", &fixture("sample-workflow.yml")]);
-    let action_lines: Vec<&str> = stdout
-        .lines()
-        .filter(|l| !l.starts_with("  "))
-        .collect();
+    let action_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with("  ")).collect();
     assert_eq!(
         action_lines,
         vec![
@@ -70,16 +68,16 @@ fn sample_workflow_deduplicates_actions() {
         .lines()
         .filter(|l| *l == "actions/checkout@v4")
         .count();
-    assert_eq!(checkout_count, 1, "actions/checkout@v4 appears 3 times in the fixture but should be deduplicated to 1");
+    assert_eq!(
+        checkout_count, 1,
+        "actions/checkout@v4 appears 3 times in the fixture but should be deduplicated to 1"
+    );
 }
 
 #[test]
 fn malformed_workflow_still_extracts_valid_actions() {
     let stdout = stdout_of(&["--file", &fixture("malformed-workflow.yml")]);
-    let action_lines: Vec<&str> = stdout
-        .lines()
-        .filter(|l| !l.starts_with("  "))
-        .collect();
+    let action_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with("  ")).collect();
     assert_eq!(
         action_lines,
         vec!["actions/checkout@v4", "actions/setup-node@v4",]
@@ -91,10 +89,7 @@ fn malformed_workflow_warns_on_stderr() {
     let output = run_ghss(&["--file", &fixture("malformed-workflow.yml")]);
 
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("WARN"),
-        "should warn about malformed job"
-    );
+    assert!(stderr.contains("WARN"), "should warn about malformed job");
     assert!(
         stderr.contains("broken-steps"),
         "should name the broken job"
@@ -120,10 +115,7 @@ fn no_file_arg_exits_with_error() {
 #[test]
 fn advisories_run_without_token() {
     let output = ghss()
-        .args([
-            "--file",
-            &fixture("sample-workflow.yml"),
-        ])
+        .args(["--file", &fixture("sample-workflow.yml")])
         .env_remove("GITHUB_TOKEN")
         .output()
         .expect("failed to execute");
@@ -146,17 +138,27 @@ fn sha_pinned_workflow_lists_actions() {
 #[test]
 fn json_flag_outputs_valid_json_array() {
     let stdout = stdout_of(&["--file", &fixture("sample-workflow.yml"), "--json"]);
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
     let arr = parsed.as_array().expect("should be a JSON array");
     assert_eq!(arr.len(), 3);
 
     // Verify expected fields are present
     for entry in arr {
         assert!(entry.get("raw").is_some(), "each entry should have 'raw'");
-        assert!(entry.get("owner").is_some(), "each entry should have 'owner'");
+        assert!(
+            entry.get("owner").is_some(),
+            "each entry should have 'owner'"
+        );
         assert!(entry.get("repo").is_some(), "each entry should have 'repo'");
-        assert!(entry.get("git_ref").is_some(), "each entry should have 'git_ref'");
-        assert!(entry.get("ref_type").is_some(), "each entry should have 'ref_type'");
+        assert!(
+            entry.get("git_ref").is_some(),
+            "each entry should have 'git_ref'"
+        );
+        assert!(
+            entry.get("ref_type").is_some(),
+            "each entry should have 'ref_type'"
+        );
     }
 
     // Verify specific actions are present
@@ -185,10 +187,7 @@ fn json_output_always_includes_advisories_key() {
 #[test]
 #[ignore]
 fn vulnerable_workflow_reports_known_advisories() {
-    let stdout = stdout_of(&[
-        "--file",
-        &fixture("vulnerable-workflow.yml"),
-    ]);
+    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml")]);
 
     // tj-actions/changed-files@v35 has known advisories
     assert!(
@@ -215,28 +214,54 @@ fn vulnerable_workflow_reports_known_advisories() {
 
 #[test]
 fn provider_osv_flag_is_accepted() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--provider", "osv"]);
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--provider",
+        "osv",
+    ]);
     assert!(output.status.success(), "--provider osv should be accepted");
 }
 
 #[test]
 fn provider_ghsa_flag_is_accepted() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--provider", "ghsa"]);
-    assert!(output.status.success(), "--provider ghsa should be accepted");
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--provider",
+        "ghsa",
+    ]);
+    assert!(
+        output.status.success(),
+        "--provider ghsa should be accepted"
+    );
 }
 
 #[test]
 fn provider_all_flag_is_accepted() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--provider", "all"]);
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--provider",
+        "all",
+    ]);
     assert!(output.status.success(), "--provider all should be accepted");
 }
 
 #[test]
 fn unknown_provider_exits_with_error() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--provider", "bogus"]);
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--provider",
+        "bogus",
+    ]);
     assert!(!output.status.success(), "unknown provider should fail");
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("unknown provider"), "should mention unknown provider");
+    assert!(
+        stderr.contains("unknown provider"),
+        "should mention unknown provider"
+    );
 }
 
 #[test]
@@ -255,10 +280,7 @@ fn depth_zero_explicit_matches_default_output() {
 fn depth_default_matches_current_behavior() {
     // No --depth flag (default) should behave like --depth 0
     let stdout = stdout_of(&["--file", &fixture("sample-workflow.yml")]);
-    let action_lines: Vec<&str> = stdout
-        .lines()
-        .filter(|l| !l.starts_with("  "))
-        .collect();
+    let action_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with("  ")).collect();
     assert_eq!(
         action_lines,
         vec![
@@ -271,7 +293,12 @@ fn depth_default_matches_current_behavior() {
 
 #[test]
 fn depth_unlimited_is_accepted() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--depth", "unlimited"]);
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--depth",
+        "unlimited",
+    ]);
     assert!(
         output.status.success(),
         "--depth unlimited should be accepted, stderr: {}",
@@ -281,11 +308,13 @@ fn depth_unlimited_is_accepted() {
 
 #[test]
 fn depth_invalid_exits_with_error() {
-    let output = run_ghss(&["--file", &fixture("sample-workflow.yml"), "--depth", "invalid"]);
-    assert!(
-        !output.status.success(),
-        "--depth invalid should fail"
-    );
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--depth",
+        "invalid",
+    ]);
+    assert!(!output.status.success(), "--depth invalid should fail");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("invalid"),
@@ -297,7 +326,13 @@ fn depth_invalid_exits_with_error() {
 #[ignore] // hits live GitHub API; flaky under rate limiting
 fn depth_zero_json_matches_default_json_output() {
     let default_stdout = stdout_of(&["--file", &fixture("sample-workflow.yml"), "--json"]);
-    let depth0_stdout = stdout_of(&["--file", &fixture("sample-workflow.yml"), "--json", "--depth", "0"]);
+    let depth0_stdout = stdout_of(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--json",
+        "--depth",
+        "0",
+    ]);
     assert_eq!(
         default_stdout, depth0_stdout,
         "--depth 0 --json should produce identical output to default --json"
@@ -312,7 +347,10 @@ fn json_flag_produces_json_tracing_on_stderr() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     // Each non-empty line on stderr should be valid JSON (structured tracing)
     let lines: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(!lines.is_empty(), "malformed workflow should produce log output");
+    assert!(
+        !lines.is_empty(),
+        "malformed workflow should produce log output"
+    );
     for line in &lines {
         assert!(
             serde_json::from_str::<serde_json::Value>(line).is_ok(),
@@ -370,7 +408,9 @@ fn depth_demo_expands_reusable_workflow_at_depth_1() {
     // The SLSA generator workflow uses actions/checkout internally.
     // Check for at least one child action from the expanded workflow.
     let lines: Vec<&str> = stdout.lines().collect();
-    let slsa_idx = lines.iter().position(|l| l.contains("slsa-framework/slsa-github-generator"));
+    let slsa_idx = lines
+        .iter()
+        .position(|l| l.contains("slsa-framework/slsa-github-generator"));
     assert!(
         slsa_idx.is_some(),
         "should find the slsa-framework ref in output"

@@ -7,12 +7,12 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument, warn};
 
-use crate::advisory::{deduplicate_advisories, Advisory};
+use super::Ecosystem;
+use super::Stage;
+use crate::advisory::{Advisory, deduplicate_advisories};
 use crate::context::AuditContext;
 use crate::github::GitHubClient;
 use crate::providers::PackageAdvisoryProvider;
-use super::Ecosystem;
-use super::Stage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyReport {
@@ -42,15 +42,14 @@ impl Stage for DependencyStage {
             .as_ref()
             .map_or(&[] as &[_], |s| s.ecosystems.as_slice());
 
-        let packages =
-            match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
-                Ok(pkgs) => pkgs,
-                Err(e) => {
-                    warn!(action = %ctx.action, error = %e, "failed to fetch dependencies");
-                    ctx.record_error(self.name(), &e);
-                    return Ok(());
-                }
-            };
+        let packages = match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
+            Ok(pkgs) => pkgs,
+            Err(e) => {
+                warn!(action = %ctx.action, error = %e, "failed to fetch dependencies");
+                ctx.record_error(self.name(), &e);
+                return Ok(());
+            }
+        };
 
         if packages.is_empty() {
             debug!(action = %ctx.action, "no ecosystems to scan for dependencies");

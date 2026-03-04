@@ -44,7 +44,9 @@ impl FromStr for DepthLimit {
         }
         match s.parse::<usize>() {
             Ok(n) => Ok(DepthLimit::Bounded(n)),
-            Err(_) => bail!("invalid depth limit: {s:?} (expected a non-negative integer or \"unlimited\")"),
+            Err(_) => bail!(
+                "invalid depth limit: {s:?} (expected a non-negative integer or \"unlimited\")"
+            ),
         }
     }
 }
@@ -142,7 +144,11 @@ mod tests {
 
     #[test]
     fn display_roundtrips() {
-        let cases = [DepthLimit::Bounded(0), DepthLimit::Bounded(42), DepthLimit::Unlimited];
+        let cases = [
+            DepthLimit::Bounded(0),
+            DepthLimit::Bounded(42),
+            DepthLimit::Unlimited,
+        ];
         for case in &cases {
             let s = case.to_string();
             let parsed: DepthLimit = s.parse().unwrap();

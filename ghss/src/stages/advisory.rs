@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use tracing::{debug, instrument, warn};
 
+use super::Stage;
 use crate::advisory::deduplicate_advisories;
 use crate::context::AuditContext;
 use crate::providers::ActionAdvisoryProvider;
-use super::Stage;
 
 pub struct AdvisoryStage {
     providers: Vec<Arc<dyn ActionAdvisoryProvider>>,
@@ -65,9 +65,7 @@ mod tests {
     #[async_trait]
     impl ActionAdvisoryProvider for FakeProvider {
         async fn query(&self, _action: &ActionRef) -> anyhow::Result<Vec<Advisory>> {
-            self.result
-                .clone()
-                .map_err(|e| anyhow::anyhow!(e))
+            self.result.clone().map_err(|e| anyhow::anyhow!(e))
         }
         fn name(&self) -> &'static str {
             self.name

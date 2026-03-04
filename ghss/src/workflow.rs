@@ -297,12 +297,8 @@ mod tests {
         let raw: Vec<String> = refs.iter().map(|r| r.to_string()).collect();
         assert!(raw.contains(&"actions/checkout@v4".to_string()));
         assert!(raw.contains(&"actions/setup-node@v4".to_string()));
-        assert!(raw.contains(
-            &"org/shared-workflows/.github/workflows/ci.yml@main".to_string()
-        ));
-        assert!(raw.contains(
-            &"org/shared-workflows/.github/workflows/deploy.yml@v1".to_string()
-        ));
+        assert!(raw.contains(&"org/shared-workflows/.github/workflows/ci.yml@main".to_string()));
+        assert!(raw.contains(&"org/shared-workflows/.github/workflows/deploy.yml@v1".to_string()));
         assert_eq!(refs.len(), 4);
     }
 

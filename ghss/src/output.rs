@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::action_ref::ActionRef;
 use crate::advisory::{Advisory, Severity};
 use crate::context::AuditContext;
-use crate::stages::dependency::DependencyReport;
 use crate::stages::ScanResult;
+use crate::stages::dependency::DependencyReport;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionEntry {
@@ -77,8 +77,7 @@ fn write_node(
             writeln!(writer, "{indent}  language: {lang}")?;
         }
         if !scan.ecosystems.is_empty() {
-            let eco_list: Vec<String> =
-                scan.ecosystems.iter().map(ToString::to_string).collect();
+            let eco_list: Vec<String> = scan.ecosystems.iter().map(ToString::to_string).collect();
             writeln!(writer, "{indent}  ecosystems: {}", eco_list.join(", "))?;
         }
     }
@@ -740,8 +739,8 @@ mod tests {
 
     #[test]
     fn text_output_dep_vulnerabilities_with_depth() {
-        use crate::stages::dependency::DependencyReport;
         use crate::stages::Ecosystem;
+        use crate::stages::dependency::DependencyReport;
 
         let child = leaf_node(ActionEntry {
             action: "actions/setup-node@v4".parse::<ActionRef>().unwrap(),
@@ -826,8 +825,8 @@ mod tests {
 
     #[test]
     fn violations_includes_dependency_advisories() {
-        use crate::stages::dependency::DependencyReport;
         use crate::stages::Ecosystem;
+        use crate::stages::dependency::DependencyReport;
 
         let nodes = vec![leaf_node(ActionEntry {
             action: sample_action(),

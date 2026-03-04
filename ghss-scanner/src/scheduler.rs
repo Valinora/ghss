@@ -18,8 +18,8 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new(cron_expr: &str) -> anyhow::Result<Scheduler> {
         let normalized = normalize_cron(cron_expr);
-        let schedule =
-            Schedule::from_str(&normalized).context(format!("invalid cron expression: {cron_expr}"))?;
+        let schedule = Schedule::from_str(&normalized)
+            .context(format!("invalid cron expression: {cron_expr}"))?;
         Ok(Scheduler { schedule })
     }
 
@@ -55,16 +55,13 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
     let scheduler = Scheduler::new(&config.scanner.schedule)?;
 
     // Set up signal handlers for graceful shutdown
-    let mut sigterm =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .context("failed to register SIGTERM handler")?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("failed to register SIGTERM handler")?;
 
     loop {
         let next = scheduler.next_tick();
         let now = Utc::now();
-        let wait = (next - now)
-            .to_std()
-            .unwrap_or(std::time::Duration::ZERO);
+        let wait = (next - now).to_std().unwrap_or(std::time::Duration::ZERO);
         tracing::info!(next = %next, wait_secs = wait.as_secs(), "Waiting for next scheduled run");
 
         // Race the cron sleep against shutdown signals
@@ -145,7 +142,14 @@ async fn persist_results(
         // Insert scan run
         let completed_at = Utc::now().to_rfc3339();
         let run_id = storage
-            .insert_scan_run(owner, name, &started_at, Some(&completed_at), cycle, "completed")
+            .insert_scan_run(
+                owner,
+                name,
+                &started_at,
+                Some(&completed_at),
+                cycle,
+                "completed",
+            )
             .await?;
 
         // Insert findings
@@ -165,8 +169,8 @@ async fn persist_results(
                 .map(|a| a.severity.as_str())
                 .next()
                 .map(String::from);
-            let serialized = serde_json::to_string(node)
-                .context("failed to serialize AuditNode")?;
+            let serialized =
+                serde_json::to_string(node).context("failed to serialize AuditNode")?;
 
             storage
                 .insert_finding(

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::instrument;
@@ -80,8 +80,8 @@ impl Default for OsvClient {
 
 impl OsvClient {
     pub fn new() -> Self {
-        let base_url = std::env::var("GHSS_OSV_BASE_URL")
-            .unwrap_or_else(|_| OSV_API_URL.to_string());
+        let base_url =
+            std::env::var("GHSS_OSV_BASE_URL").unwrap_or_else(|_| OSV_API_URL.to_string());
         Self {
             http: reqwest::Client::new(),
             base_url,
@@ -291,10 +291,7 @@ mod tests {
         assert_eq!(a.id, "GHSA-mcph-m25j-8j63");
         assert_eq!(a.summary, "tj-actions/changed-files workflow compromise");
         assert_eq!(a.severity, "critical");
-        assert_eq!(
-            a.url,
-            "https://github.com/advisories/GHSA-mcph-m25j-8j63"
-        );
+        assert_eq!(a.url, "https://github.com/advisories/GHSA-mcph-m25j-8j63");
         assert_eq!(a.affected_range, Some("< 46.0.1".to_string()));
         assert_eq!(a.source, "OSV");
     }
