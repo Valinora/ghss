@@ -27,9 +27,13 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -39,11 +43,27 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Auto-format
+        if: github.event_name == 'pull_request'
+        run: cargo fmt --all
 
-      - name: Rustfmt
+      - name: Auto-fix clippy
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged
+
+      - name: Commit auto-fixes
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
+        with:
+          commit_message: "style: auto-fix formatting and clippy warnings"
+
+      - name: Rustfmt check
         run: cargo fmt --all -- --check
+
+      - name: Clippy check
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   audit:
     uses: ./.github/workflows/audit.yml
