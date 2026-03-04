@@ -139,9 +139,18 @@ mod tests {
     fn builder_stage_count() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let pipeline = PipelineBuilder::new()
-            .stage(TrackingStage { name: "a", log: log.clone() })
-            .stage(TrackingStage { name: "b", log: log.clone() })
-            .stage(TrackingStage { name: "c", log: log.clone() })
+            .stage(TrackingStage {
+                name: "a",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "b",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "c",
+                log: log.clone(),
+            })
             .build();
         assert_eq!(pipeline.stage_count(), 3);
     }
@@ -156,9 +165,18 @@ mod tests {
     fn builder_stage_ordering() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let pipeline = PipelineBuilder::new()
-            .stage(TrackingStage { name: "first", log: log.clone() })
-            .stage(TrackingStage { name: "second", log: log.clone() })
-            .stage(TrackingStage { name: "third", log: log.clone() })
+            .stage(TrackingStage {
+                name: "first",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "second",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "third",
+                log: log.clone(),
+            })
             .build();
 
         let names: Vec<&str> = pipeline.stages.iter().map(|s| s.name()).collect();
@@ -177,7 +195,10 @@ mod tests {
     async fn run_one_processes_context() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let pipeline = PipelineBuilder::new()
-            .stage(TrackingStage { name: "test", log: log.clone() })
+            .stage(TrackingStage {
+                name: "test",
+                log: log.clone(),
+            })
             .build();
         let mut ctx = test_ctx();
         pipeline.run_one(&mut ctx).await;
@@ -189,9 +210,18 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::new()));
 
         let pipeline = PipelineBuilder::new()
-            .stage(TrackingStage { name: "first", log: log.clone() })
-            .stage(TrackingStage { name: "second", log: log.clone() })
-            .stage(TrackingStage { name: "third", log: log.clone() })
+            .stage(TrackingStage {
+                name: "first",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "second",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "third",
+                log: log.clone(),
+            })
             .build();
 
         let mut ctx = test_ctx();
@@ -207,9 +237,18 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::new()));
 
         let pipeline = PipelineBuilder::new()
-            .stage(TrackingStage { name: "before", log: log.clone() })
-            .stage(FailingStage { name: "bad", log: log.clone() })
-            .stage(TrackingStage { name: "after", log: log.clone() })
+            .stage(TrackingStage {
+                name: "before",
+                log: log.clone(),
+            })
+            .stage(FailingStage {
+                name: "bad",
+                log: log.clone(),
+            })
+            .stage(TrackingStage {
+                name: "after",
+                log: log.clone(),
+            })
             .build();
 
         let mut ctx = test_ctx();

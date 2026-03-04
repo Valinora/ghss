@@ -28,7 +28,11 @@ impl Stage for CompositeExpandStage {
         // Try action.yml first, then action.yaml
         let mut content = None;
         for filename in ["action.yml", "action.yaml"] {
-            if let Some(c) = self.client.get_raw_content_optional(owner, repo, git_ref, filename).await? {
+            if let Some(c) = self
+                .client
+                .get_raw_content_optional(owner, repo, git_ref, filename)
+                .await?
+            {
                 content = Some(c);
                 break;
             }

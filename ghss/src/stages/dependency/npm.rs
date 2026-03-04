@@ -41,11 +41,7 @@ fn parse_npm_dependencies(content: &str) -> Result<Vec<(String, String)>> {
 
     Ok(deps
         .iter()
-        .filter_map(|(name, version)| {
-            version
-                .as_str()
-                .map(|v| (name.clone(), v.to_string()))
-        })
+        .filter_map(|(name, version)| version.as_str().map(|v| (name.clone(), v.to_string())))
         .collect())
 }
 

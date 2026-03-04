@@ -32,15 +32,16 @@ impl Storage {
     /// Creates parent directories if needed for file-based databases.
     pub async fn connect(url: &str) -> anyhow::Result<Storage> {
         // Create parent directories for file-based SQLite databases
-        if let Some(path) = url.strip_prefix("sqlite://") {
-            if path != ":memory:" && !path.is_empty() {
-                let db_path = std::path::Path::new(path);
-                if let Some(parent) = db_path.parent() {
-                    std::fs::create_dir_all(parent).context(format!(
-                        "failed to create parent directory for database: {}",
-                        parent.display()
-                    ))?;
-                }
+        if let Some(path) = url.strip_prefix("sqlite://")
+            && path != ":memory:"
+            && !path.is_empty()
+        {
+            let db_path = std::path::Path::new(path);
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent).context(format!(
+                    "failed to create parent directory for database: {}",
+                    parent.display()
+                ))?;
             }
         }
 
@@ -96,6 +97,7 @@ impl Storage {
     }
 
     /// Insert a finding record.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_finding(
         &self,
         scan_run_id: i64,
@@ -236,25 +238,22 @@ mod tests {
     async fn migration_creates_tables() {
         let storage = test_storage().await;
         // Verify tables exist by attempting queries
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM scan_runs")
-                .fetch_one(&storage.pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_runs")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM findings")
-                .fetch_one(&storage.pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM findings")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM drift_events")
-                .fetch_one(&storage.pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM drift_events")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -262,7 +261,14 @@ mod tests {
     async fn insert_and_retrieve_scan_run() {
         let storage = test_storage().await;
         let id = storage
-            .insert_scan_run("my-org", "my-app", "2024-01-01T00:00:00Z", None, 1, "completed")
+            .insert_scan_run(
+                "my-org",
+                "my-app",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                "completed",
+            )
             .await
             .unwrap();
         assert_eq!(id, 1);
@@ -321,7 +327,15 @@ mod tests {
             .await
             .unwrap();
         storage
-            .insert_finding(run1, None, "actions/checkout@v4", Some("sha_old"), None, None, "{}")
+            .insert_finding(
+                run1,
+                None,
+                "actions/checkout@v4",
+                Some("sha_old"),
+                None,
+                None,
+                "{}",
+            )
             .await
             .unwrap();
 
@@ -331,7 +345,15 @@ mod tests {
             .await
             .unwrap();
         storage
-            .insert_finding(run2, None, "actions/checkout@v4", Some("sha_new"), None, None, "{}")
+            .insert_finding(
+                run2,
+                None,
+                "actions/checkout@v4",
+                Some("sha_new"),
+                None,
+                None,
+                "{}",
+            )
             .await
             .unwrap();
 

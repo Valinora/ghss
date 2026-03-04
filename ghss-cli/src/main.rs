@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 use ghss::depth::DepthLimit;
 use ghss::github::GitHubClient;
@@ -11,7 +11,8 @@ use ghss::output::{self, AuditNode};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
 use ghss::stages::{
-    AdvisoryStage, CompositeExpandStage, DependencyStage, RefResolveStage, ScanStage, WorkflowExpandStage,
+    AdvisoryStage, CompositeExpandStage, DependencyStage, RefResolveStage, ScanStage,
+    WorkflowExpandStage,
 };
 use ghss::walker::Walker;
 
@@ -145,7 +146,10 @@ async fn run(args: &Cli) -> anyhow::Result<i32> {
                 violations.len()
             );
             for v in &violations {
-                eprintln!("  {} - {} ({}): {}", v.action, v.advisory_id, v.severity, v.summary);
+                eprintln!(
+                    "  {} - {} ({}): {}",
+                    v.action, v.advisory_id, v.severity, v.summary
+                );
             }
             eprintln!();
             return Ok(2);

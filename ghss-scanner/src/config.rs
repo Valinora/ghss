@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -85,12 +85,13 @@ impl ScannerConfig {
 
 /// Expand `${VAR_NAME}` patterns in the github_token field.
 fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
-    if let Some(ref token) = config.scanner.github_token {
-        if let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-            let value = std::env::var(var_name)
-                .context(format!("env var {var_name} referenced in github_token is not set"))?;
-            config.scanner.github_token = Some(value);
-        }
+    if let Some(ref token) = config.scanner.github_token
+        && let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+    {
+        let value = std::env::var(var_name).context(format!(
+            "env var {var_name} referenced in github_token is not set"
+        ))?;
+        config.scanner.github_token = Some(value);
     }
     Ok(())
 }
@@ -111,8 +112,10 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
     // Validate cron expression (normalize 5-field → 6-field)
     use std::str::FromStr;
     let cron_expr = normalize_cron(&config.scanner.schedule);
-    cron::Schedule::from_str(&cron_expr)
-        .context(format!("invalid cron expression: {}", config.scanner.schedule))?;
+    cron::Schedule::from_str(&cron_expr).context(format!(
+        "invalid cron expression: {}",
+        config.scanner.schedule
+    ))?;
 
     // Validate storage URL scheme
     if config.storage.url.starts_with("postgresql://") {

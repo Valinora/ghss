@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{instrument, warn};
 
+use super::Stage;
 use crate::action_ref::ActionRef;
 use crate::context::AuditContext;
 use crate::github::GitHubClient;
-use super::Stage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -111,10 +111,7 @@ fn extract_ecosystems(repo: &Value) -> Vec<Ecosystem> {
 
 /// Scan an action's repository to detect languages and package ecosystems.
 #[tracing::instrument(skip(client), fields(action = %action))]
-pub async fn scan_action(
-    action: &ActionRef,
-    client: &GitHubClient,
-) -> Result<ScanResult> {
+pub async fn scan_action(action: &ActionRef, client: &GitHubClient) -> Result<ScanResult> {
     let query = build_query(&action.owner, &action.repo);
     let data = client.graphql_post(&query).await?;
 
@@ -162,15 +159,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn mock_graphql_response(
-        languages: Vec<(&str, u64)>,
-        manifests: Vec<&str>,
-    ) -> Value {
+    fn mock_graphql_response(languages: Vec<(&str, u64)>, manifests: Vec<&str>) -> Value {
         let edges: Vec<Value> = languages
             .into_iter()
-            .map(|(name, size)| {
-                json!({ "size": size, "node": { "name": name } })
-            })
+            .map(|(name, size)| json!({ "size": size, "node": { "name": name } }))
             .collect();
 
         let mut repo = json!({
@@ -193,7 +185,11 @@ mod tests {
     #[test]
     fn parses_languages_and_ecosystems() {
         let repo = mock_graphql_response(
-            vec![("TypeScript", 50000), ("JavaScript", 30000), ("Shell", 1000)],
+            vec![
+                ("TypeScript", 50000),
+                ("JavaScript", 30000),
+                ("Shell", 1000),
+            ],
             vec!["packageJson", "dockerfile"],
         );
 
@@ -214,10 +210,7 @@ mod tests {
 
     #[test]
     fn no_manifests_returns_empty_ecosystems() {
-        let repo = mock_graphql_response(
-            vec![("Rust", 10000)],
-            vec![],
-        );
+        let repo = mock_graphql_response(vec![("Rust", 10000)], vec![]);
 
         let ecosystems = extract_ecosystems(&repo);
         assert!(ecosystems.is_empty());

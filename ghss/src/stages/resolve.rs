@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use tracing::{instrument, warn};
 
+use super::Stage;
 use crate::context::AuditContext;
 use crate::github::GitHubClient;
-use super::Stage;
 
 pub struct RefResolveStage {
     client: GitHubClient,

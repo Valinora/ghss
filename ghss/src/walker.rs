@@ -9,6 +9,9 @@ use crate::context::AuditContext;
 use crate::output::AuditNode;
 use crate::pipeline::Pipeline;
 
+#[cfg(test)]
+type VisitLog = Arc<std::sync::Mutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>;
+
 /// Drives breadth-first traversal of the action dependency graph.
 ///
 /// The Walker takes a `Pipeline` and processes each BFS frontier concurrently
@@ -97,8 +100,7 @@ impl Walker {
                 let pipeline = self.pipeline.clone();
                 let key = action.clone();
                 handles.push(tokio::spawn(async move {
-                    let _permit =
-                        sem.acquire().await.expect("semaphore closed unexpectedly");
+                    let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
 
                     let mut ctx = AuditContext {
                         action,
@@ -145,11 +147,7 @@ impl Walker {
 
                 if should_expand {
                     for child_action in children_actions {
-                        frontier.push_back((
-                            child_action,
-                            depth + 1,
-                            Some(node_key.clone()),
-                        ));
+                        frontier.push_back((child_action, depth + 1, Some(node_key.clone())));
                     }
                 }
             }
@@ -196,7 +194,7 @@ mod tests {
         /// Maps ActionRef -> list of child ActionRefs
         child_map: HashMap<ActionRef, Vec<ActionRef>>,
         /// Records (action, depth, parent) in the order visited
-        visit_log: Arc<StdMutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>,
+        visit_log: VisitLog,
     }
 
     #[async_trait]
@@ -224,7 +222,7 @@ mod tests {
 
     fn make_walker(
         child_map: HashMap<ActionRef, Vec<ActionRef>>,
-        visit_log: Arc<StdMutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>,
+        visit_log: VisitLog,
         max_depth: Option<usize>,
     ) -> Walker {
         let pipeline = PipelineBuilder::new()
@@ -252,10 +250,7 @@ mod tests {
             action("owner/A@v1"),
             vec![action("owner/B@v1"), action("owner/C@v1")],
         );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/D@v1")],
-        );
+        child_map.insert(action("owner/B@v1"), vec![action("owner/D@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -263,7 +258,12 @@ mod tests {
         let roots = vec![action("owner/A@v1")];
         let _result = walker.walk(roots).await;
 
-        let visited: Vec<String> = log.lock().unwrap().iter().map(|(a, _, _)| a.to_string()).collect();
+        let visited: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.to_string())
+            .collect();
         assert_eq!(
             visited,
             vec!["owner/A@v1", "owner/B@v1", "owner/C@v1", "owner/D@v1"],
@@ -275,14 +275,8 @@ mod tests {
     #[tokio::test]
     async fn depth_tracking() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/B@v1")],
-        );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/C@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/B@v1")]);
+        child_map.insert(action("owner/B@v1"), vec![action("owner/C@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -306,10 +300,7 @@ mod tests {
     #[tokio::test]
     async fn parent_tracking() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/root@v1"),
-            vec![action("owner/child@v1")],
-        );
+        child_map.insert(action("owner/root@v1"), vec![action("owner/child@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -328,14 +319,8 @@ mod tests {
     #[tokio::test]
     async fn cycle_detection() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/B@v1")],
-        );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/A@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/B@v1")]);
+        child_map.insert(action("owner/B@v1"), vec![action("owner/A@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -343,8 +328,17 @@ mod tests {
         let roots = vec![action("owner/A@v1")];
         walker.walk(roots).await;
 
-        let visited: Vec<ActionRef> = log.lock().unwrap().iter().map(|(a, _, _)| a.clone()).collect();
-        assert_eq!(visited.len(), 2, "each action should be visited exactly once");
+        let visited: Vec<ActionRef> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.clone())
+            .collect();
+        assert_eq!(
+            visited.len(),
+            2,
+            "each action should be visited exactly once"
+        );
         assert!(visited.contains(&action("owner/A@v1")));
         assert!(visited.contains(&action("owner/B@v1")));
     }
@@ -353,10 +347,7 @@ mod tests {
     #[tokio::test]
     async fn max_depth_enforcement() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/B@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/B@v1")]);
         child_map.insert(
             action("owner/B@v1"),
             vec![action("owner/C@v1")], // should NOT be visited
@@ -368,7 +359,12 @@ mod tests {
         let roots = vec![action("owner/A@v1")];
         walker.walk(roots).await;
 
-        let visited: Vec<String> = log.lock().unwrap().iter().map(|(a, _, _)| a.to_string()).collect();
+        let visited: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.to_string())
+            .collect();
         assert_eq!(
             visited,
             vec!["owner/A@v1", "owner/B@v1"],
@@ -391,7 +387,12 @@ mod tests {
         let roots = vec![action("owner/A@v1")];
         walker.walk(roots).await;
 
-        let visited: Vec<String> = log.lock().unwrap().iter().map(|(a, _, _)| a.to_string()).collect();
+        let visited: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.to_string())
+            .collect();
         assert_eq!(
             visited,
             vec!["owner/A@v1"],
@@ -403,18 +404,9 @@ mod tests {
     #[tokio::test]
     async fn unlimited_depth() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/B@v1")],
-        );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/C@v1")],
-        );
-        child_map.insert(
-            action("owner/C@v1"),
-            vec![action("owner/D@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/B@v1")]);
+        child_map.insert(action("owner/B@v1"), vec![action("owner/C@v1")]);
+        child_map.insert(action("owner/C@v1"), vec![action("owner/D@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -422,7 +414,12 @@ mod tests {
         let roots = vec![action("owner/A@v1")];
         walker.walk(roots).await;
 
-        let visited: Vec<String> = log.lock().unwrap().iter().map(|(a, _, _)| a.to_string()).collect();
+        let visited: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.to_string())
+            .collect();
         assert_eq!(
             visited,
             vec!["owner/A@v1", "owner/B@v1", "owner/C@v1", "owner/D@v1"],
@@ -438,10 +435,7 @@ mod tests {
             action("owner/A@v1"),
             vec![action("owner/B@v1"), action("owner/C@v1")],
         );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/D@v1")],
-        );
+        child_map.insert(action("owner/B@v1"), vec![action("owner/D@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -474,14 +468,8 @@ mod tests {
     #[tokio::test]
     async fn multiple_roots() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/C@v1")],
-        );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/D@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/C@v1")]);
+        child_map.insert(action("owner/B@v1"), vec![action("owner/D@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -501,14 +489,8 @@ mod tests {
     #[tokio::test]
     async fn shared_child_deduplication() {
         let mut child_map = HashMap::new();
-        child_map.insert(
-            action("owner/A@v1"),
-            vec![action("owner/C@v1")],
-        );
-        child_map.insert(
-            action("owner/B@v1"),
-            vec![action("owner/C@v1")],
-        );
+        child_map.insert(action("owner/A@v1"), vec![action("owner/C@v1")]);
+        child_map.insert(action("owner/B@v1"), vec![action("owner/C@v1")]);
 
         let log = Arc::new(StdMutex::new(Vec::new()));
         let walker = make_walker(child_map, Arc::clone(&log), None);
@@ -516,12 +498,24 @@ mod tests {
         let roots = vec![action("owner/A@v1"), action("owner/B@v1")];
         walker.walk(roots).await;
 
-        let visited: Vec<ActionRef> = log.lock().unwrap().iter().map(|(a, _, _)| a.clone()).collect();
+        let visited: Vec<ActionRef> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(a, _, _)| a.clone())
+            .collect();
         // A, B are roots (depth 0). C is only visited once.
         assert_eq!(visited.len(), 3);
 
-        let c_visits: Vec<_> = visited.iter().filter(|v| **v == action("owner/C@v1")).collect();
-        assert_eq!(c_visits.len(), 1, "shared child should only be visited once");
+        let c_visits: Vec<_> = visited
+            .iter()
+            .filter(|v| **v == action("owner/C@v1"))
+            .collect();
+        assert_eq!(
+            c_visits.len(),
+            1,
+            "shared child should only be visited once"
+        );
     }
 
     /// Empty roots produces an empty result.

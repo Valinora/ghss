@@ -34,7 +34,11 @@ impl Stage for WorkflowExpandStage {
         let repo = &ctx.action.repo;
         let git_ref = &ctx.action.git_ref;
 
-        let yaml_content = match self.client.get_raw_content_optional(owner, repo, git_ref, &path).await? {
+        let yaml_content = match self
+            .client
+            .get_raw_content_optional(owner, repo, git_ref, &path)
+            .await?
+        {
             Some(content) => content,
             None => {
                 debug!(action = %ctx.action, "workflow file not found, skipping");

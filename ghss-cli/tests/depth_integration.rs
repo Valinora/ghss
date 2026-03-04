@@ -55,36 +55,37 @@ async fn setup_mock_server() -> MockServer {
     // deep-leaf: leaf node (node20)
     Mock::given(method("GET"))
         .and(path("/test-org/deep-leaf/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Deep Leaf\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Deep Leaf\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     // leaf-x: leaf node (node20)
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-x/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Leaf X\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf X\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     // leaf-action: leaf node (node20)
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-action/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     // Advisory API: return empty array for all GHSA advisory queries
     Mock::given(method("GET"))
         .and(path("/advisories"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!([])),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;
 
@@ -153,8 +154,7 @@ async fn depth_0_produces_flat_output() {
     );
 
     // Only root actions at column 0
-    let action_lines: Vec<&str> =
-        stdout.lines().filter(|l| !l.starts_with(' ')).collect();
+    let action_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with(' ')).collect();
     assert_eq!(
         action_lines,
         vec!["test-org/composite-a@v1", "test-org/leaf-action@v1"],
@@ -477,9 +477,7 @@ async fn setup_scan_mock_server() -> MockServer {
     // OSV query endpoint: return empty for all queries
     Mock::given(method("POST"))
         .and(path("/osv-query"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .mount(&server)
         .await;
 
@@ -580,17 +578,19 @@ async fn setup_advisory_mock_server() -> MockServer {
     // Return action.yml for leaf actions
     Mock::given(method("GET"))
         .and(path("/test-org/composite-a/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Composite A\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Composite A\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-action/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
@@ -618,9 +618,7 @@ async fn setup_advisory_mock_server() -> MockServer {
     // OSV endpoint: return empty
     Mock::given(method("POST"))
         .and(path("/osv-query"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .mount(&server)
         .await;
 
@@ -630,13 +628,7 @@ async fn setup_advisory_mock_server() -> MockServer {
 #[tokio::test]
 async fn mocked_advisory_appears_in_text_output() {
     let server = setup_advisory_mock_server().await;
-    let stdout = stdout_of_mock(
-        &server,
-        &[
-            "--file",
-            &fixture("depth-test-workflow.yml"),
-        ],
-    );
+    let stdout = stdout_of_mock(&server, &["--file", &fixture("depth-test-workflow.yml")]);
 
     assert!(
         stdout.contains("GHSA-test-adv1-0001"),
@@ -657,11 +649,7 @@ async fn mocked_advisory_appears_in_json_output() {
     let server = setup_advisory_mock_server().await;
     let stdout = stdout_of_mock(
         &server,
-        &[
-            "--file",
-            &fixture("depth-test-workflow.yml"),
-            "--json",
-        ],
+        &["--file", &fixture("depth-test-workflow.yml"), "--json"],
     );
 
     let parsed: serde_json::Value =
@@ -672,10 +660,7 @@ async fn mocked_advisory_appears_in_json_output() {
     let has_advisory = arr.iter().any(|entry| {
         entry["advisories"]
             .as_array()
-            .is_some_and(|advs| {
-                advs.iter()
-                    .any(|a| a["id"] == "GHSA-test-adv1-0001")
-            })
+            .is_some_and(|advs| advs.iter().any(|a| a["id"] == "GHSA-test-adv1-0001"))
     });
     assert!(
         has_advisory,
@@ -702,44 +687,47 @@ async fn setup_deps_mock_server() -> MockServer {
     // composite-a with package.json ecosystem for scan
     Mock::given(method("GET"))
         .and(path("/test-org/composite-a/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Composite A\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Composite A\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-action/v1/action.yml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n"),
+        )
         .mount(&server)
         .await;
 
     // package.json for composite-a
     Mock::given(method("GET"))
         .and(path("/test-org/composite-a/v1/package.json"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"name": "composite-a", "dependencies": {"lodash": "^4.17.20"}}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                r#"{"name": "composite-a", "dependencies": {"lodash": "^4.17.20"}}"#,
+            ),
+        )
         .mount(&server)
         .await;
 
     // package.json for leaf-action
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-action/v1/package.json"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"name": "leaf-action", "dependencies": {}}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"name": "leaf-action", "dependencies": {}}"#),
+        )
         .mount(&server)
         .await;
 
     // GHSA advisory endpoint: return empty
     Mock::given(method("GET"))
         .and(path("/advisories"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!([])),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;
 
@@ -799,9 +787,7 @@ async fn setup_deps_mock_server() -> MockServer {
     // OSV: return empty for everything else
     Mock::given(method("POST"))
         .and(path("/osv-query"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .expect(0..)
         .mount(&server)
         .await;
@@ -897,13 +883,7 @@ async fn fail_on_severity_exits_0_when_below_threshold() {
 #[tokio::test]
 async fn fail_on_severity_exits_0_without_flag() {
     let server = setup_advisory_mock_server().await;
-    let output = run_ghss_with_mock(
-        &server,
-        &[
-            "--file",
-            &fixture("depth-test-workflow.yml"),
-        ],
-    );
+    let output = run_ghss_with_mock(&server, &["--file", &fixture("depth-test-workflow.yml")]);
 
     assert_eq!(
         output.status.code(),
