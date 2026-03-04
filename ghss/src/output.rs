@@ -165,30 +165,30 @@ fn collect_violations_recursive(
     let action_name = node.entry.action.to_string();
 
     for adv in &node.entry.advisories {
-        if let Some(sev) = adv.parsed_severity() {
-            if sev >= threshold {
-                violations.push(SeverityViolation {
-                    action: action_name.clone(),
-                    advisory_id: adv.id.clone(),
-                    severity: adv.severity.clone(),
-                    summary: adv.summary.clone(),
-                });
-            }
+        if let Some(sev) = adv.parsed_severity()
+            && sev >= threshold
+        {
+            violations.push(SeverityViolation {
+                action: action_name.clone(),
+                advisory_id: adv.id.clone(),
+                severity: adv.severity.clone(),
+                summary: adv.summary.clone(),
+            });
         }
     }
 
     for dep in &node.entry.dep_vulnerabilities {
         let dep_action = format!("{} -> {}@{}", action_name, dep.package, dep.version);
         for adv in &dep.advisories {
-            if let Some(sev) = adv.parsed_severity() {
-                if sev >= threshold {
-                    violations.push(SeverityViolation {
-                        action: dep_action.clone(),
-                        advisory_id: adv.id.clone(),
-                        severity: adv.severity.clone(),
-                        summary: adv.summary.clone(),
-                    });
-                }
+            if let Some(sev) = adv.parsed_severity()
+                && sev >= threshold
+            {
+                violations.push(SeverityViolation {
+                    action: dep_action.clone(),
+                    advisory_id: adv.id.clone(),
+                    severity: adv.severity.clone(),
+                    summary: adv.summary.clone(),
+                });
             }
         }
     }

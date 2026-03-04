@@ -72,7 +72,7 @@ fn generate_fake_nodes(cycle: u64) -> Vec<AuditNode> {
     ];
 
     // Third node varies by cycle to enable drift detection in later tasks
-    if cycle % 2 == 0 {
+    if cycle.is_multiple_of(2) {
         let codecov: ActionRef = "codecov/codecov-action@v3".parse().unwrap();
         nodes.push(AuditNode {
             entry: ActionEntry {

@@ -85,12 +85,12 @@ impl ScannerConfig {
 
 /// Expand `${VAR_NAME}` patterns in the github_token field.
 fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
-    if let Some(ref token) = config.scanner.github_token {
-        if let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-            let value = std::env::var(var_name)
-                .context(format!("env var {var_name} referenced in github_token is not set"))?;
-            config.scanner.github_token = Some(value);
-        }
+    if let Some(ref token) = config.scanner.github_token
+        && let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
+    {
+        let value = std::env::var(var_name)
+            .context(format!("env var {var_name} referenced in github_token is not set"))?;
+        config.scanner.github_token = Some(value);
     }
     Ok(())
 }

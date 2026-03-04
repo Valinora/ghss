@@ -32,15 +32,16 @@ impl Storage {
     /// Creates parent directories if needed for file-based databases.
     pub async fn connect(url: &str) -> anyhow::Result<Storage> {
         // Create parent directories for file-based SQLite databases
-        if let Some(path) = url.strip_prefix("sqlite://") {
-            if path != ":memory:" && !path.is_empty() {
-                let db_path = std::path::Path::new(path);
-                if let Some(parent) = db_path.parent() {
-                    std::fs::create_dir_all(parent).context(format!(
-                        "failed to create parent directory for database: {}",
-                        parent.display()
-                    ))?;
-                }
+        if let Some(path) = url.strip_prefix("sqlite://")
+            && path != ":memory:"
+            && !path.is_empty()
+        {
+            let db_path = std::path::Path::new(path);
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent).context(format!(
+                    "failed to create parent directory for database: {}",
+                    parent.display()
+                ))?;
             }
         }
 
@@ -96,6 +97,7 @@ impl Storage {
     }
 
     /// Insert a finding record.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_finding(
         &self,
         scan_run_id: i64,

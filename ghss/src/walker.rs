@@ -9,6 +9,9 @@ use crate::context::AuditContext;
 use crate::output::AuditNode;
 use crate::pipeline::Pipeline;
 
+#[cfg(test)]
+type VisitLog = Arc<std::sync::Mutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>;
+
 /// Drives breadth-first traversal of the action dependency graph.
 ///
 /// The Walker takes a `Pipeline` and processes each BFS frontier concurrently
@@ -196,7 +199,7 @@ mod tests {
         /// Maps ActionRef -> list of child ActionRefs
         child_map: HashMap<ActionRef, Vec<ActionRef>>,
         /// Records (action, depth, parent) in the order visited
-        visit_log: Arc<StdMutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>,
+        visit_log: VisitLog,
     }
 
     #[async_trait]
@@ -224,7 +227,7 @@ mod tests {
 
     fn make_walker(
         child_map: HashMap<ActionRef, Vec<ActionRef>>,
-        visit_log: Arc<StdMutex<Vec<(ActionRef, usize, Option<ActionRef>)>>>,
+        visit_log: VisitLog,
         max_depth: Option<usize>,
     ) -> Walker {
         let pipeline = PipelineBuilder::new()

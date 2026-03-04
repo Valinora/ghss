@@ -224,10 +224,10 @@ fn format_range_events(events: &[OsvEvent]) -> String {
     let mut parts = Vec::new();
 
     for event in events {
-        if let Some(introduced) = &event.introduced {
-            if introduced != "0" {
-                parts.push(format!(">= {introduced}"));
-            }
+        if let Some(introduced) = &event.introduced
+            && introduced != "0"
+        {
+            parts.push(format!(">= {introduced}"));
         }
         if let Some(fixed) = &event.fixed {
             parts.push(format!("< {fixed}"));

@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # Marvin Attack timing sidechannel in `rsa` crate (RUSTSEC-2023-0071).
+    # No fix available upstream. Pulled in transitively via sqlx-macros-core
+    # which unconditionally depends on sqlx-mysql → rsa, even when MySQL
+    # features are not enabled. Not exploitable in our usage (SQLite/Postgres only).
+    "RUSTSEC-2023-0071",
+]
