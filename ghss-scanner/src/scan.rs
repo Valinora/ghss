@@ -18,6 +18,14 @@ use ghss::walker::Walker;
 
 use crate::config::{PipelineSection, RepoEntry};
 
+type RepoOutcome = Result<(String, Vec<AuditNode>), (String, anyhow::Error)>;
+
+/// Result of a scan cycle, including findings and error tracking.
+pub struct ScanCycleResult {
+    pub results: Vec<(String, Vec<AuditNode>)>,
+    pub failures: Vec<(String, anyhow::Error)>,
+}
+
 /// Run a single scan cycle over the configured repos using real GitHub API
 /// calls and the `ghss` library pipeline.
 pub async fn run_scan_cycle(
@@ -26,13 +34,24 @@ pub async fn run_scan_cycle(
     client: &GitHubClient,
     pipeline_config: &PipelineSection,
     max_repo_concurrency: usize,
-) -> Vec<(String, Vec<AuditNode>)> {
-    tracing::info!(cycle, repos = repos.len(), max_repo_concurrency, "Starting scan cycle");
+) -> ScanCycleResult {
+    tracing::info!(
+        cycle,
+        repos = repos.len(),
+        max_repo_concurrency,
+        "Starting scan cycle"
+    );
 
     let Ok(pipeline) = build_pipeline(client, pipeline_config).inspect_err(|e| {
         tracing::error!(error = %e, "Failed to build pipeline");
     }) else {
-        return vec![];
+        return ScanCycleResult {
+            results: vec![],
+            failures: vec![(
+                "pipeline".to_string(),
+                anyhow::anyhow!("Failed to build pipeline"),
+            )],
+        };
     };
     let pipeline = Arc::new(pipeline);
 
@@ -41,32 +60,70 @@ pub async fn run_scan_cycle(
         .to_max_depth();
     let concurrency = pipeline.max_concurrency();
 
-    let results: Vec<(String, Vec<AuditNode>)> = futures::stream::iter(repos.iter().map(|repo| {
-        let pipeline = pipeline.clone();
-        let client = client.clone();
-        let repo_id = format!("{}/{}", repo.owner, repo.name);
-        async move {
-            tracing::info!(cycle, repo = %repo_id, "Scanning repo");
-            let nodes = scan_repo(&client, repo, &pipeline, depth, concurrency)
-                .await
-                .inspect(|nodes| {
-                    tracing::info!(cycle, repo = %repo_id, findings = nodes.len(), "Scan complete for repo");
-                })
-                .inspect_err(|e| {
-                    tracing::error!(cycle, repo = %repo_id, error = %e, "Failed to scan repo");
-                })
-                .unwrap_or_default();
-            (repo_id, nodes)
+    let outcomes: Vec<RepoOutcome> =
+        futures::stream::iter(repos.iter().map(|repo| {
+            let pipeline = pipeline.clone();
+            let client = client.clone();
+            async move { scan_repo_task(&client, repo, &pipeline, depth, concurrency, cycle).await }
+        }))
+        .buffer_unordered(max_repo_concurrency)
+        .collect()
+        .await;
+
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for outcome in outcomes {
+        match outcome {
+            Ok(success) => results.push(success),
+            Err(failure) => failures.push(failure),
         }
-    }))
-    .buffer_unordered(max_repo_concurrency)
-    .collect()
-    .await;
+    }
 
+    let repos_succeeded = results.len();
+    let total_errors = failures.len();
     let total_findings: usize = results.iter().map(|(_, nodes)| nodes.len()).sum();
-    tracing::info!(cycle, total_findings, "Scan cycle complete");
+    let total_advisories: usize = results
+        .iter()
+        .flat_map(|(_, nodes)| nodes.iter())
+        .map(|node| node.entry.advisories.len())
+        .sum();
 
-    results
+    // DEBUG: per-repo detail
+    for (repo_id, nodes) in &results {
+        for node in nodes {
+            let sha_display = node
+                .entry
+                .resolved_sha
+                .as_deref()
+                .map_or("none", |s| &s[..s.len().min(12)]);
+            let advisory_ids: Vec<&str> = node
+                .entry
+                .advisories
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect();
+            tracing::debug!(
+                repo = %repo_id,
+                action = %node.entry.action,
+                resolved_sha = %sha_display,
+                advisories = ?advisory_ids,
+                "Scan finding detail"
+            );
+        }
+    }
+
+    // INFO: cycle summary
+    tracing::info!(
+        cycle,
+        repos_attempted = repos.len(),
+        repos_succeeded,
+        total_findings,
+        total_advisories,
+        errors = total_errors,
+        "Scan cycle summary"
+    );
+
+    ScanCycleResult { results, failures }
 }
 
 /// Discover workflow files for a repo. If `repo.workflows` is set, use that
@@ -98,7 +155,11 @@ async fn discover_workflows(
     let workflows: Vec<String> = entries
         .iter()
         .filter_map(|entry| entry.get("name")?.as_str().map(String::from))
-        .filter(|name| name.ends_with(".yml") || name.ends_with(".yaml"))
+        .filter(|name| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml"))
+        })
         .collect();
 
     Ok(workflows)
@@ -153,11 +214,35 @@ fn build_pipeline(
         .build())
 }
 
+/// Run the scan pipeline for a single repo, returning Ok on success or Err with the repo ID and error.
+async fn scan_repo_task(
+    client: &GitHubClient,
+    repo: &RepoEntry,
+    pipeline: &ghss::pipeline::Pipeline,
+    depth: Option<usize>,
+    concurrency: usize,
+    cycle: u64,
+) -> Result<(String, Vec<AuditNode>), (String, anyhow::Error)> {
+    let repo_id = format!("{}/{}", repo.owner, repo.name);
+    tracing::info!(cycle, repo = %repo_id, "Scanning repo");
+    match scan_repo(client, repo, &repo_id, pipeline, depth, concurrency).await {
+        Ok(nodes) => {
+            tracing::info!(cycle, repo = %repo_id, findings = nodes.len(), "Scan complete for repo");
+            Ok((repo_id, nodes))
+        }
+        Err(e) => {
+            tracing::warn!(cycle, repo = %repo_id, error = %e, "Failed to scan repo");
+            Err((repo_id, e))
+        }
+    }
+}
+
 /// Scan a single repo: discover workflows, fetch YAML, parse actions,
 /// deduplicate, and run the walker pipeline.
 async fn scan_repo(
     client: &GitHubClient,
     repo: &RepoEntry,
+    repo_id: &str,
     pipeline: &ghss::pipeline::Pipeline,
     depth: Option<usize>,
     concurrency: usize,
@@ -165,10 +250,7 @@ async fn scan_repo(
     let workflows = discover_workflows(client, repo).await?;
 
     if workflows.is_empty() {
-        tracing::debug!(
-            repo = %format!("{}/{}", repo.owner, repo.name),
-            "No workflow files found"
-        );
+        tracing::debug!(repo = %repo_id, "No workflow files found");
         return Ok(vec![]);
     }
 
@@ -196,7 +278,7 @@ async fn scan_repo(
     }
 
     tracing::debug!(
-        repo = %format!("{}/{}", repo.owner, repo.name),
+        repo = %repo_id,
         actions = actions.len(),
         "Running pipeline"
     );

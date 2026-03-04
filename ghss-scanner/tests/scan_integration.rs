@@ -319,3 +319,148 @@ workflows = ["ci.yml"]
 
     pool.close().await;
 }
+
+#[tokio::test]
+async fn partial_failure_persists_successful_repo_and_marks_partial() {
+    let server = MockServer::start().await;
+
+    // good-org/good-repo: full mock setup
+    Mock::given(method("GET"))
+        .and(path("/repos/good-org/good-repo/contents/.github/workflows"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {"name": "ci.yml", "type": "file"}
+        ])))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/good-org/good-repo/HEAD/.github/workflows/ci.yml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
+        ))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout/git/ref/tags/v4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/tags/v4",
+            "object": {
+                "type": "commit",
+                "sha": "b4ffde65f46336ab88eb53be808477a3936bae11"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/actions/checkout/v4/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Checkout\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // bad-org/bad-repo: Contents API returns 404
+    Mock::given(method("GET"))
+        .and(path("/repos/bad-org/bad-repo/contents/.github/workflows"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "message": "Not Found"
+        })))
+        .mount(&server)
+        .await;
+
+    // Advisory endpoints (shared): return empty
+    Mock::given(method("GET"))
+        .and(path("/advisories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/osv-query/v1/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"vulns": []})))
+        .mount(&server)
+        .await;
+
+    let tmp_dir = TempDir::new().unwrap();
+    let db_path = tmp_dir.path().join("partial-test.db");
+    let db_path_str = db_path.to_str().unwrap();
+
+    let repos_toml = r#"
+[[repos]]
+owner = "good-org"
+name = "good-repo"
+
+[[repos]]
+owner = "bad-org"
+name = "bad-repo"
+"#;
+
+    let config_file = write_config(db_path_str, repos_toml);
+
+    let output = scanner_bin()
+        .args([
+            "--once",
+            "--config",
+            config_file.path().to_str().unwrap(),
+            "-vv",
+        ])
+        .env("GHSS_API_BASE_URL", server.uri())
+        .env("GHSS_RAW_BASE_URL", server.uri())
+        .env("GHSS_OSV_BASE_URL", format!("{}/osv-query", server.uri()))
+        .output()
+        .expect("failed to run ghss-scanner");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "scanner should not crash on partial failure: {stderr}"
+    );
+
+    // Should see a warning about the failed repo
+    assert!(
+        stderr.contains("Failed to scan repo") || stderr.contains("bad-org/bad-repo"),
+        "expected warning about failed repo in stderr: {stderr}"
+    );
+
+    // Open the database and verify
+    let pool = SqlitePoolOptions::new()
+        .connect(&format!("sqlite://{db_path_str}"))
+        .await
+        .expect("failed to open test database");
+
+    // good-org/good-repo should have a scan run with findings
+    let good_findings: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM findings f JOIN scan_runs sr ON f.scan_run_id = sr.id WHERE sr.repo_owner = 'good-org'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        good_findings > 0,
+        "expected findings for good-org/good-repo, got 0"
+    );
+
+    // bad-org/bad-repo should have no findings (empty results persisted)
+    let bad_findings: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM findings f JOIN scan_runs sr ON f.scan_run_id = sr.id WHERE sr.repo_owner = 'bad-org'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(bad_findings, 0, "expected no findings for bad-org/bad-repo");
+
+    // The scan run status should be "partial" since one repo failed
+    let statuses: Vec<String> = sqlx::query_scalar("SELECT DISTINCT status FROM scan_runs")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(
+        statuses.contains(&"partial".to_string()),
+        "expected 'partial' status in scan_runs, got: {statuses:?}"
+    );
+
+    pool.close().await;
+}

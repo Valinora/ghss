@@ -2,6 +2,9 @@
 name = "ghss-scanner"
 version = "0.1.0"
 edition = "2024"
+description = "Scheduled GitHub Actions supply-chain scanner with drift detection"
+license = "MIT"
+repository = "https://github.com/Valinora/ghss"
 
 [dependencies]
 anyhow.workspace = true

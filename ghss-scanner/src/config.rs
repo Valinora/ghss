@@ -75,10 +75,10 @@ pub struct HealthSection {
 }
 
 impl ScannerConfig {
-    pub fn from_file(path: &Path) -> anyhow::Result<ScannerConfig> {
+    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let contents =
             std::fs::read_to_string(path).context(format!("failed to read {}", path.display()))?;
-        let mut config: ScannerConfig =
+        let mut config: Self =
             toml::from_str(&contents).context("failed to parse config")?;
 
         expand_env_vars(&mut config)?;
@@ -88,7 +88,7 @@ impl ScannerConfig {
     }
 }
 
-/// Expand `${VAR_NAME}` patterns in the github_token field.
+/// Expand `${VAR_NAME}` patterns in the `github_token` field.
 fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
     if let Some(ref token) = config.scanner.github_token
         && let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
@@ -104,8 +104,8 @@ fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
 /// Convert a 5-field cron expression to the 6-field format expected by the `cron` crate
 /// by prepending "0 " (seconds = 0). If already 6+ fields, return as-is.
 pub fn normalize_cron(expr: &str) -> String {
-    let fields: Vec<&str> = expr.split_whitespace().collect();
-    if fields.len() == 5 {
+    let field_count = expr.split_whitespace().count();
+    if field_count == 5 {
         format!("0 {expr}")
     } else {
         expr.to_string()
@@ -153,16 +153,18 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
 
 /// Resolve config file path by precedence:
 /// 1. CLI --config flag
-/// 2. GHSS_SCANNER_CONFIG env var
+/// 2. `GHSS_SCANNER_CONFIG` env var
 /// 3. /opt/ghss/config.toml default
 pub fn resolve_config_path(cli_path: Option<&Path>) -> anyhow::Result<PathBuf> {
-    let path = if let Some(p) = cli_path {
-        p.to_path_buf()
-    } else if let Ok(env_path) = std::env::var("GHSS_SCANNER_CONFIG") {
-        PathBuf::from(env_path)
-    } else {
-        PathBuf::from("/opt/ghss/config.toml")
-    };
+    let path = cli_path.map_or_else(
+        || {
+            std::env::var("GHSS_SCANNER_CONFIG").map_or_else(
+                |_| PathBuf::from("/opt/ghss/config.toml"),
+                PathBuf::from,
+            )
+        },
+        Path::to_path_buf,
+    );
 
     if !path.exists() {
         bail!("config file not found: {}", path.display());
