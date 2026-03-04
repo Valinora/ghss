@@ -862,6 +862,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use chrono::Utc;
 use cron::Schedule;
+use ghss::github::GitHubClient;
 use ghss::output::AuditNode;
 
 use crate::config::{RepoEntry, ScannerConfig, normalize_cron};
@@ -42,11 +43,13 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
     let storage = Storage::connect(&config.storage.url).await?;
     storage.migrate().await?;
 
+    let client = GitHubClient::new(config.scanner.github_token.clone());
+
     let mut cycle: u64 = 0;
 
     if once {
         cycle += 1;
-        let results = scan::run_scan_cycle(&config.repos, cycle);
+        let results = scan::run_scan_cycle(&config.repos, cycle, &client, &config.pipeline).await;
         persist_results(&storage, &config.repos, &results, cycle).await?;
         storage.close().await;
         return Ok(());
@@ -78,7 +81,7 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
         }
 
         cycle += 1;
-        let results = scan::run_scan_cycle(&config.repos, cycle);
+        let results = scan::run_scan_cycle(&config.repos, cycle, &client, &config.pipeline).await;
         persist_results(&storage, &config.repos, &results, cycle).await?;
     }
 
@@ -126,17 +129,12 @@ async fn persist_results(
                 .as_deref()
                 .map(|s| &s[..s.len().min(7)])
                 .unwrap_or("none");
-            match prev_map.get(finding.action_ref.as_str()) {
-                None => {
-                    tracing::info!("[NEW]    {}    (sha: {})", finding.action_ref, sha_display);
-                }
-                Some(prev_sha) if *prev_sha != finding.resolved_sha.as_deref() => {
-                    tracing::info!("[DRIFT]  {}    (sha: {})", finding.action_ref, sha_display);
-                }
-                Some(_) => {
-                    tracing::info!("[CACHED] {}    (sha: {})", finding.action_ref, sha_display);
-                }
-            }
+            let status = match prev_map.get(finding.action_ref.as_str()) {
+                None => "[NEW]   ",
+                Some(prev_sha) if *prev_sha != finding.resolved_sha.as_deref() => "[DRIFT] ",
+                Some(_) => "[CACHED]",
+            };
+            tracing::info!("{status}  {}    (sha: {sha_display})", finding.action_ref);
         }
 
         // Insert scan run

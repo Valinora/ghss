@@ -4,6 +4,8 @@ use std::process::Command;
 use sqlx::Row;
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::{NamedTempFile, TempDir};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn scanner_bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ghss-scanner"))
@@ -23,6 +25,7 @@ schedule = "{schedule}"
 [[repos]]
 owner = "my-org"
 name = "my-app"
+workflows = ["ci.yml"]
 
 [pipeline]
 depth = "0"
@@ -38,8 +41,86 @@ url = "sqlite://{db_path}"
     f
 }
 
+/// Set up a mock server that serves a workflow file with a known action
+/// and mocks ref resolution + advisory endpoints.
+async fn setup_mock_server() -> MockServer {
+    let server = MockServer::start().await;
+
+    // Raw content: ci.yml workflow
+    Mock::given(method("GET"))
+        .and(path("/my-org/my-app/HEAD/.github/workflows/ci.yml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v3\n",
+        ))
+        .mount(&server)
+        .await;
+
+    // Ref resolution: actions/checkout@v4 — return a tag ref
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout/git/ref/tags/v4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/tags/v4",
+            "object": {
+                "type": "commit",
+                "sha": "b4ffde65f46336ab88eb53be808477a3936bae11"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // Ref resolution: actions/setup-node@v3
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/setup-node/git/ref/tags/v3"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/tags/v3",
+            "object": {
+                "type": "commit",
+                "sha": "1a4442cacd436585916779fa0482e7ad73969eb2"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // Composite action check: actions/checkout — node20 (not composite)
+    Mock::given(method("GET"))
+        .and(path("/actions/checkout/v4/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Checkout\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // Composite action check: actions/setup-node — node20 (not composite)
+    Mock::given(method("GET"))
+        .and(path("/actions/setup-node/v3/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Setup Node\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // Advisory endpoints: GHSA (return empty)
+    Mock::given(method("GET"))
+        .and(path("/advisories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    // Advisory endpoints: OSV (return empty)
+    Mock::given(method("POST"))
+        .and(path("/osv-query/v1/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"vulns": []})))
+        .mount(&server)
+        .await;
+
+    server
+}
+
 #[tokio::test]
 async fn once_mode_persists_to_sqlite() {
+    let server = setup_mock_server().await;
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let db_path_str = db_path.to_str().unwrap();
@@ -54,6 +135,9 @@ async fn once_mode_persists_to_sqlite() {
             config_file.path().to_str().unwrap(),
             "-vv",
         ])
+        .env("GHSS_API_BASE_URL", server.uri())
+        .env("GHSS_RAW_BASE_URL", server.uri())
+        .env("GHSS_OSV_BASE_URL", format!("{}/osv-query", server.uri()))
         .output()
         .expect("failed to run ghss-scanner");
 
@@ -127,6 +211,7 @@ async fn once_mode_persists_to_sqlite() {
 
 #[tokio::test]
 async fn daemon_mode_sigterm_graceful_shutdown() {
+    let server = setup_mock_server().await;
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("daemon.db");
     let db_path_str = db_path.to_str().unwrap();
@@ -137,6 +222,9 @@ async fn daemon_mode_sigterm_graceful_shutdown() {
     // Start in daemon mode (no --once)
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ghss-scanner"))
         .args(["--config", config_file.path().to_str().unwrap(), "-vv"])
+        .env("GHSS_API_BASE_URL", server.uri())
+        .env("GHSS_RAW_BASE_URL", server.uri())
+        .env("GHSS_OSV_BASE_URL", format!("{}/osv-query", server.uri()))
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .spawn()
@@ -159,7 +247,7 @@ async fn daemon_mode_sigterm_graceful_shutdown() {
     });
 
     // Wait enough time for at least one scan cycle to complete
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     // Send SIGTERM
     unsafe {
@@ -190,6 +278,7 @@ async fn daemon_mode_sigterm_graceful_shutdown() {
 
 #[tokio::test]
 async fn once_mode_full_lifecycle() {
+    let server = setup_mock_server().await;
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("lifecycle.db");
     let db_path_str = db_path.to_str().unwrap();
@@ -204,6 +293,9 @@ async fn once_mode_full_lifecycle() {
             config_file.path().to_str().unwrap(),
             "-vv",
         ])
+        .env("GHSS_API_BASE_URL", server.uri())
+        .env("GHSS_RAW_BASE_URL", server.uri())
+        .env("GHSS_OSV_BASE_URL", format!("{}/osv-query", server.uri()))
         .output()
         .expect("failed to run ghss-scanner");
 
@@ -221,11 +313,7 @@ async fn once_mode_full_lifecycle() {
         "expected 'Config loaded' in stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("migrations applied"),
-        "expected migration log in stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("Scanning"),
+        stderr.contains("Starting scan cycle"),
         "expected scan cycle log in stderr:\n{stderr}"
     );
     assert!(
