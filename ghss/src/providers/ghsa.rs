@@ -59,8 +59,8 @@ impl ActionAdvisoryProvider for GhsaProvider {
 
 #[instrument(skip(json))]
 fn parse_advisories(json: Value) -> Result<Vec<Advisory>> {
-    let responses: Vec<GhsaAdvisoryResponse> = serde_json::from_value(json)
-        .context("expected JSON array from advisory API")?;
+    let responses: Vec<GhsaAdvisoryResponse> =
+        serde_json::from_value(json).context("expected JSON array from advisory API")?;
 
     let advisories = responses
         .into_iter()
@@ -119,7 +119,10 @@ mod tests {
 
         let a = &advisories[0];
         assert_eq!(a.id, "GHSA-r79c-pqj3-577x");
-        assert_eq!(a.summary, "Super-linter is vulnerable to command injection via crafted filenames");
+        assert_eq!(
+            a.summary,
+            "Super-linter is vulnerable to command injection via crafted filenames"
+        );
         assert_eq!(a.severity, "high");
         assert_eq!(a.url, "https://github.com/advisories/GHSA-r79c-pqj3-577x");
         assert_eq!(a.affected_range, Some(">= 6.0.0, < 8.3.1".to_string()));

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use tracing::instrument;
 
@@ -17,10 +17,10 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     pub fn new(token: Option<String>) -> Self {
-        let api_base_url = std::env::var("GHSS_API_BASE_URL")
-            .unwrap_or_else(|_| GITHUB_API_BASE.to_string());
-        let raw_base_url = std::env::var("GHSS_RAW_BASE_URL")
-            .unwrap_or_else(|_| RAW_CONTENT_BASE.to_string());
+        let api_base_url =
+            std::env::var("GHSS_API_BASE_URL").unwrap_or_else(|_| GITHUB_API_BASE.to_string());
+        let raw_base_url =
+            std::env::var("GHSS_RAW_BASE_URL").unwrap_or_else(|_| RAW_CONTENT_BASE.to_string());
         Self {
             client: reqwest::Client::builder()
                 .user_agent("ghss")
@@ -54,7 +54,9 @@ impl GitHubClient {
         );
 
         if let Some(json) = self.api_get_optional(&tag_url).await? {
-            return self.extract_commit_sha(&json, &action.owner, &action.repo).await;
+            return self
+                .extract_commit_sha(&json, &action.owner, &action.repo)
+                .await;
         }
 
         // Fall back to branch
@@ -68,11 +70,17 @@ impl GitHubClient {
             .await
             .with_context(|| format!("ref '{}' not found as tag or branch", action.git_ref))?;
 
-        self.extract_commit_sha(&json, &action.owner, &action.repo).await
+        self.extract_commit_sha(&json, &action.owner, &action.repo)
+            .await
     }
 
     #[instrument(skip(self, ref_json))]
-    async fn extract_commit_sha(&self, ref_json: &Value, owner: &str, repo: &str) -> Result<String> {
+    async fn extract_commit_sha(
+        &self,
+        ref_json: &Value,
+        owner: &str,
+        repo: &str,
+    ) -> Result<String> {
         let obj = ref_json
             .get("object")
             .context("missing 'object' in ref response")?;
@@ -94,9 +102,7 @@ impl GitHubClient {
         // Annotated tag — dereference to get the commit
         if obj_type == "tag" {
             let api = &self.api_base_url;
-            let tag_url = format!(
-                "{api}/repos/{owner}/{repo}/git/tags/{sha}"
-            );
+            let tag_url = format!("{api}/repos/{owner}/{repo}/git/tags/{sha}");
             let tag_json = self.api_get(&tag_url).await?;
 
             let commit_sha = tag_json
@@ -259,10 +265,9 @@ mod tests {
     #[tokio::test]
     async fn sha_ref_returns_immediately() {
         let client = GitHubClient::new(Some("fake".into()));
-        let action: ActionRef =
-            "actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"
-                .parse()
-                .unwrap();
+        let action: ActionRef = "actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"
+            .parse()
+            .unwrap();
         let result = client.resolve_ref(&action).await.unwrap();
         assert_eq!(result, "b4ffde65f46336ab88eb53be808477a3936bae11");
     }
@@ -278,7 +283,10 @@ mod tests {
             }
         });
 
-        let sha = client.extract_commit_sha(&ref_json, "actions", "checkout").await.unwrap();
+        let sha = client
+            .extract_commit_sha(&ref_json, "actions", "checkout")
+            .await
+            .unwrap();
         assert_eq!(sha, "abc123def456abc123def456abc123def456abc1");
     }
 
@@ -293,7 +301,9 @@ mod tests {
             }
         });
 
-        let result = client.extract_commit_sha(&ref_json, "actions", "checkout").await;
+        let result = client
+            .extract_commit_sha(&ref_json, "actions", "checkout")
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unexpected"));
     }
@@ -303,7 +313,9 @@ mod tests {
         let client = GitHubClient::new(Some("fake".into()));
         let ref_json = json!({"ref": "refs/tags/v4"});
 
-        let result = client.extract_commit_sha(&ref_json, "actions", "checkout").await;
+        let result = client
+            .extract_commit_sha(&ref_json, "actions", "checkout")
+            .await;
         assert!(result.is_err());
     }
 
