@@ -49,7 +49,14 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
 
     if once {
         cycle += 1;
-        let results = scan::run_scan_cycle(&config.repos, cycle, &client, &config.pipeline).await;
+        let results = scan::run_scan_cycle(
+            &config.repos,
+            cycle,
+            &client,
+            &config.pipeline,
+            config.scanner.max_repo_concurrency.unwrap_or(1),
+        )
+        .await;
         persist_results(&storage, &config.repos, &results, cycle).await?;
         storage.close().await;
         return Ok(());
@@ -81,7 +88,14 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
         }
 
         cycle += 1;
-        let results = scan::run_scan_cycle(&config.repos, cycle, &client, &config.pipeline).await;
+        let results = scan::run_scan_cycle(
+            &config.repos,
+            cycle,
+            &client,
+            &config.pipeline,
+            config.scanner.max_repo_concurrency.unwrap_or(1),
+        )
+        .await;
         persist_results(&storage, &config.repos, &results, cycle).await?;
     }
 

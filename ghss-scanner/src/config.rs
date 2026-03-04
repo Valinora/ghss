@@ -19,6 +19,8 @@ pub struct ScannerConfig {
 pub struct ScannerSection {
     pub github_token: Option<String>,
     pub schedule: String,
+    #[serde(default)]
+    pub max_repo_concurrency: Option<usize>,
 }
 
 impl std::fmt::Debug for ScannerSection {
@@ -31,6 +33,7 @@ impl std::fmt::Debug for ScannerSection {
         f.debug_struct("ScannerSection")
             .field("github_token", &token_display)
             .field("schedule", &self.schedule)
+            .field("max_repo_concurrency", &self.max_repo_concurrency)
             .finish()
     }
 }
@@ -49,6 +52,8 @@ pub struct PipelineSection {
     pub depth: String,
     pub provider: String,
     pub deps: bool,
+    #[serde(default)]
+    pub concurrency: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +121,21 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
         "invalid cron expression: {}",
         config.scanner.schedule
     ))?;
+
+    // Validate concurrency fields
+    if config.scanner.max_repo_concurrency == Some(0) {
+        bail!("max_repo_concurrency must be a positive integer (got 0)");
+    }
+    if config.pipeline.concurrency == Some(0) {
+        bail!("pipeline concurrency must be a positive integer (got 0)");
+    }
+
+    // Log effective values
+    tracing::info!(
+        max_repo_concurrency = config.scanner.max_repo_concurrency.unwrap_or(1),
+        pipeline_concurrency = config.pipeline.concurrency.unwrap_or(10),
+        "Effective concurrency settings"
+    );
 
     // Validate storage URL scheme
     if config.storage.url.starts_with("postgresql://") {
@@ -444,6 +464,111 @@ url = "sqlite:///tmp/ghss.db"
         assert!(
             err.to_string().contains("not found"),
             "expected not found error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_concurrency_fields_missing_defaults() {
+        // Missing concurrency fields should parse successfully (defaults to None)
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert_eq!(config.scanner.max_repo_concurrency, None);
+        assert_eq!(config.pipeline.concurrency, None);
+    }
+
+    #[test]
+    fn test_concurrency_fields_valid_positive() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+max_repo_concurrency = 4
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+concurrency = 20
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert_eq!(config.scanner.max_repo_concurrency, Some(4));
+        assert_eq!(config.pipeline.concurrency, Some(20));
+    }
+
+    #[test]
+    fn test_max_repo_concurrency_zero_rejected() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+max_repo_concurrency = 0
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("max_repo_concurrency"),
+            "expected max_repo_concurrency error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_concurrency_zero_rejected() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+concurrency = 0
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("pipeline concurrency"),
+            "expected pipeline concurrency error, got: {err}"
         );
     }
 }

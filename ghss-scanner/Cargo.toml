@@ -10,6 +10,7 @@ chrono = "0.4.44"
 clap.workspace = true
 clap-verbosity-flag.workspace = true
 cron = "0.15.0"
+futures.workspace = true
 ghss = { version = "0.1.0", path = "../ghss" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"

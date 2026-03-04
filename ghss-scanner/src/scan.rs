@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use futures::StreamExt;
 use ghss::action_ref::ActionRef;
 use ghss::depth::DepthLimit;
 use ghss::github::GitHubClient;
@@ -24,8 +25,9 @@ pub async fn run_scan_cycle(
     cycle: u64,
     client: &GitHubClient,
     pipeline_config: &PipelineSection,
+    max_repo_concurrency: usize,
 ) -> Vec<(String, Vec<AuditNode>)> {
-    tracing::info!(cycle, repos = repos.len(), "Starting scan cycle");
+    tracing::info!(cycle, repos = repos.len(), max_repo_concurrency, "Starting scan cycle");
 
     let Ok(pipeline) = build_pipeline(client, pipeline_config).inspect_err(|e| {
         tracing::error!(error = %e, "Failed to build pipeline");
@@ -39,23 +41,27 @@ pub async fn run_scan_cycle(
         .to_max_depth();
     let concurrency = pipeline.max_concurrency();
 
-    let mut results = Vec::new();
-
-    for repo in repos {
+    let results: Vec<(String, Vec<AuditNode>)> = futures::stream::iter(repos.iter().map(|repo| {
+        let pipeline = pipeline.clone();
+        let client = client.clone();
         let repo_id = format!("{}/{}", repo.owner, repo.name);
-        tracing::info!(cycle, repo = %repo_id, "Scanning repo");
-
-        let nodes = scan_repo(client, repo, &pipeline, depth, concurrency)
-            .await
-            .inspect(|nodes| {
-                tracing::info!(cycle, repo = %repo_id, findings = nodes.len(), "Scan complete for repo");
-            })
-            .inspect_err(|e| {
-                tracing::error!(cycle, repo = %repo_id, error = %e, "Failed to scan repo");
-            })
-            .unwrap_or_default();
-        results.push((repo_id, nodes));
-    }
+        async move {
+            tracing::info!(cycle, repo = %repo_id, "Scanning repo");
+            let nodes = scan_repo(&client, repo, &pipeline, depth, concurrency)
+                .await
+                .inspect(|nodes| {
+                    tracing::info!(cycle, repo = %repo_id, findings = nodes.len(), "Scan complete for repo");
+                })
+                .inspect_err(|e| {
+                    tracing::error!(cycle, repo = %repo_id, error = %e, "Failed to scan repo");
+                })
+                .unwrap_or_default();
+            (repo_id, nodes)
+        }
+    }))
+    .buffer_unordered(max_repo_concurrency)
+    .collect()
+    .await;
 
     let total_findings: usize = results.iter().map(|(_, nodes)| nodes.len()).sum();
     tracing::info!(cycle, total_findings, "Scan cycle complete");
@@ -142,7 +148,9 @@ fn build_pipeline(
         }
     }
 
-    Ok(builder.build())
+    Ok(builder
+        .max_concurrency(pipeline_config.concurrency.unwrap_or(10))
+        .build())
 }
 
 /// Scan a single repo: discover workflows, fetch YAML, parse actions,
@@ -210,6 +218,7 @@ mod tests {
             depth: "0".to_string(),
             provider: "all".to_string(),
             deps: false,
+            concurrency: None,
         };
         let pipeline = build_pipeline(&client, &config).unwrap();
         // 4 base stages: composite, workflow_expand, resolve, advisory
@@ -223,6 +232,7 @@ mod tests {
             depth: "0".to_string(),
             provider: "all".to_string(),
             deps: true,
+            concurrency: None,
         };
         let pipeline = build_pipeline(&client, &config).unwrap();
         // deps=true but no token: still 4 stages
@@ -236,6 +246,7 @@ mod tests {
             depth: "0".to_string(),
             provider: "all".to_string(),
             deps: true,
+            concurrency: None,
         };
         let pipeline = build_pipeline(&client, &config).unwrap();
         // 4 base + scan + dependency = 6
