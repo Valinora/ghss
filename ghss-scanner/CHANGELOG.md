@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/Valinora/ghss/compare/v0.1.0...v0.2.0) (2026-03-05)
+
+
+### Features
+
+* **scanner:** wire up the scanner to actually scan things ([#13](https://github.com/Valinora/ghss/issues/13)) ([9f5ca50](https://github.com/Valinora/ghss/commit/9f5ca50cc34a83bdf94e1b2bbff9d1d26b486d64))
+
+
+### Bug Fixes
+
+* **ci:** resolve clippy and cargo-audit failures ([#4](https://github.com/Valinora/ghss/issues/4)) ([2e79f1e](https://github.com/Valinora/ghss/commit/2e79f1ea9fd01f6997dbb93d521f49d2d14b42c0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ghss bumped from 0.1.0 to 0.1.1
+
 ## 0.1.0 (2026-03-04)
 
 

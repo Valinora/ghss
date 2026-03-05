@@ -1,6 +1,6 @@
 [package]
 name = "ghss-scanner"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Scheduled GitHub Actions supply-chain scanner with drift detection"
 license = "MIT"
@@ -14,7 +14,7 @@ clap.workspace = true
 clap-verbosity-flag.workspace = true
 cron = "0.15.0"
 futures.workspace = true
-ghss = { version = "0.1.0", path = "../ghss" }
+ghss = { version = "0.1.1", path = "../ghss" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 opentelemetry = "0.31.0"
