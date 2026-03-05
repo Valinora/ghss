@@ -19,6 +19,8 @@ pub struct ScannerConfig {
 pub struct ScannerSection {
     pub github_token: Option<String>,
     pub schedule: String,
+    #[serde(default)]
+    pub max_repo_concurrency: Option<usize>,
 }
 
 impl std::fmt::Debug for ScannerSection {
@@ -31,6 +33,7 @@ impl std::fmt::Debug for ScannerSection {
         f.debug_struct("ScannerSection")
             .field("github_token", &token_display)
             .field("schedule", &self.schedule)
+            .field("max_repo_concurrency", &self.max_repo_concurrency)
             .finish()
     }
 }
@@ -49,6 +52,8 @@ pub struct PipelineSection {
     pub depth: String,
     pub provider: String,
     pub deps: bool,
+    #[serde(default)]
+    pub concurrency: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,11 +75,10 @@ pub struct HealthSection {
 }
 
 impl ScannerConfig {
-    pub fn from_file(path: &Path) -> anyhow::Result<ScannerConfig> {
+    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let contents =
             std::fs::read_to_string(path).context(format!("failed to read {}", path.display()))?;
-        let mut config: ScannerConfig =
-            toml::from_str(&contents).context("failed to parse config")?;
+        let mut config: Self = toml::from_str(&contents).context("failed to parse config")?;
 
         expand_env_vars(&mut config)?;
         validate(&config)?;
@@ -83,7 +87,7 @@ impl ScannerConfig {
     }
 }
 
-/// Expand `${VAR_NAME}` patterns in the github_token field.
+/// Expand `${VAR_NAME}` patterns in the `github_token` field.
 fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
     if let Some(ref token) = config.scanner.github_token
         && let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
@@ -99,8 +103,8 @@ fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
 /// Convert a 5-field cron expression to the 6-field format expected by the `cron` crate
 /// by prepending "0 " (seconds = 0). If already 6+ fields, return as-is.
 pub fn normalize_cron(expr: &str) -> String {
-    let fields: Vec<&str> = expr.split_whitespace().collect();
-    if fields.len() == 5 {
+    let field_count = expr.split_whitespace().count();
+    if field_count == 5 {
         format!("0 {expr}")
     } else {
         expr.to_string()
@@ -116,6 +120,21 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
         "invalid cron expression: {}",
         config.scanner.schedule
     ))?;
+
+    // Validate concurrency fields
+    if config.scanner.max_repo_concurrency == Some(0) {
+        bail!("max_repo_concurrency must be a positive integer (got 0)");
+    }
+    if config.pipeline.concurrency == Some(0) {
+        bail!("pipeline concurrency must be a positive integer (got 0)");
+    }
+
+    // Log effective values
+    tracing::info!(
+        max_repo_concurrency = config.scanner.max_repo_concurrency.unwrap_or(1),
+        pipeline_concurrency = config.pipeline.concurrency.unwrap_or(10),
+        "Effective concurrency settings"
+    );
 
     // Validate storage URL scheme
     if config.storage.url.starts_with("postgresql://") {
@@ -133,16 +152,16 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
 
 /// Resolve config file path by precedence:
 /// 1. CLI --config flag
-/// 2. GHSS_SCANNER_CONFIG env var
+/// 2. `GHSS_SCANNER_CONFIG` env var
 /// 3. /opt/ghss/config.toml default
 pub fn resolve_config_path(cli_path: Option<&Path>) -> anyhow::Result<PathBuf> {
-    let path = if let Some(p) = cli_path {
-        p.to_path_buf()
-    } else if let Ok(env_path) = std::env::var("GHSS_SCANNER_CONFIG") {
-        PathBuf::from(env_path)
-    } else {
-        PathBuf::from("/opt/ghss/config.toml")
-    };
+    let path = cli_path.map_or_else(
+        || {
+            std::env::var("GHSS_SCANNER_CONFIG")
+                .map_or_else(|_| PathBuf::from("/opt/ghss/config.toml"), PathBuf::from)
+        },
+        Path::to_path_buf,
+    );
 
     if !path.exists() {
         bail!("config file not found: {}", path.display());
@@ -444,6 +463,111 @@ url = "sqlite:///tmp/ghss.db"
         assert!(
             err.to_string().contains("not found"),
             "expected not found error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_concurrency_fields_missing_defaults() {
+        // Missing concurrency fields should parse successfully (defaults to None)
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert_eq!(config.scanner.max_repo_concurrency, None);
+        assert_eq!(config.pipeline.concurrency, None);
+    }
+
+    #[test]
+    fn test_concurrency_fields_valid_positive() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+max_repo_concurrency = 4
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+concurrency = 20
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert_eq!(config.scanner.max_repo_concurrency, Some(4));
+        assert_eq!(config.pipeline.concurrency, Some(20));
+    }
+
+    #[test]
+    fn test_max_repo_concurrency_zero_rejected() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+max_repo_concurrency = 0
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("max_repo_concurrency"),
+            "expected max_repo_concurrency error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_concurrency_zero_rejected() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+concurrency = 0
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("pipeline concurrency"),
+            "expected pipeline concurrency error, got: {err}"
         );
     }
 }

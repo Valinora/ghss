@@ -2,6 +2,9 @@
 name = "ghss-scanner"
 version = "0.1.0"
 edition = "2024"
+description = "Scheduled GitHub Actions supply-chain scanner with drift detection"
+license = "MIT"
+repository = "https://github.com/Valinora/ghss"
 
 [dependencies]
 anyhow.workspace = true
@@ -10,6 +13,7 @@ chrono = "0.4.44"
 clap.workspace = true
 clap-verbosity-flag.workspace = true
 cron = "0.15.0"
+futures.workspace = true
 ghss = { version = "0.1.0", path = "../ghss" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
@@ -29,3 +33,4 @@ serde_json = { workspace = true }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

@@ -848,6 +848,7 @@ dependencies = [
  "clap",
  "clap-verbosity-flag",
  "cron",
+ "futures",
  "ghss",
  "libc",
  "notify",
@@ -862,6 +863,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]

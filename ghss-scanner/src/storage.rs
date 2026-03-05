@@ -4,7 +4,23 @@ use anyhow::Context;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 
-/// Persistent storage backed by SQLite.
+/// Status of a completed scan cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanStatus {
+    Completed,
+    Partial,
+}
+
+impl ScanStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Partial => "partial",
+        }
+    }
+}
+
+/// Persistent storage backed by `SQLite`.
 pub struct Storage {
     pool: SqlitePool,
 }
@@ -25,12 +41,12 @@ pub struct DriftEvent {
 }
 
 impl Storage {
-    /// Connect to the SQLite database at the given URL.
+    /// Connect to the `SQLite` database at the given URL.
     ///
     /// The URL should be in the form `sqlite:///path/to/db.sqlite` or
     /// `sqlite::memory:` for in-memory databases.
     /// Creates parent directories if needed for file-based databases.
-    pub async fn connect(url: &str) -> anyhow::Result<Storage> {
+    pub async fn connect(url: &str) -> anyhow::Result<Self> {
         // Create parent directories for file-based SQLite databases
         if let Some(path) = url.strip_prefix("sqlite://")
             && path != ":memory:"
@@ -55,7 +71,7 @@ impl Storage {
             .await
             .context(format!("failed to connect to database: {url}"))?;
 
-        Ok(Storage { pool })
+        Ok(Self { pool })
     }
 
     /// Run embedded migrations to set up the schema.
@@ -76,7 +92,7 @@ impl Storage {
         started_at: &str,
         completed_at: Option<&str>,
         cycle_number: u64,
-        status: &str,
+        status: ScanStatus,
     ) -> anyhow::Result<i64> {
         let row = sqlx::query(
             "INSERT INTO scan_runs (repo_owner, repo_name, started_at, completed_at, cycle_number, status)
@@ -87,8 +103,8 @@ impl Storage {
         .bind(repo_name)
         .bind(started_at)
         .bind(completed_at)
-        .bind(cycle_number as i64)
-        .bind(status)
+        .bind(cycle_number.cast_signed())
+        .bind(status.as_str())
         .fetch_one(&self.pool)
         .await
         .context("failed to insert scan run")?;
@@ -101,7 +117,6 @@ impl Storage {
     pub async fn insert_finding(
         &self,
         scan_run_id: i64,
-        workflow_path: Option<&str>,
         action_ref: &str,
         resolved_sha: Option<&str>,
         advisory_ids: Option<&str>,
@@ -110,11 +125,10 @@ impl Storage {
     ) -> anyhow::Result<i64> {
         let row = sqlx::query(
             "INSERT INTO findings (scan_run_id, workflow_path, action_ref, resolved_sha, advisory_ids, severity, serialized_node)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, NULL, ?, ?, ?, ?, ?)
              RETURNING id",
         )
         .bind(scan_run_id)
-        .bind(workflow_path)
         .bind(action_ref)
         .bind(resolved_sha)
         .bind(advisory_ids)
@@ -162,23 +176,11 @@ impl Storage {
         let rows = sqlx::query(
             "SELECT f.action_ref, f.resolved_sha
              FROM findings f
-             JOIN scan_runs sr ON f.scan_run_id = sr.id
-             WHERE sr.repo_owner = ? AND sr.repo_name = ?
-             ORDER BY sr.id DESC
-             LIMIT (
-                 SELECT COUNT(*) FROM findings f2
-                 JOIN scan_runs sr2 ON f2.scan_run_id = sr2.id
-                 WHERE sr2.repo_owner = ? AND sr2.repo_name = ?
-                 AND sr2.id = (
-                     SELECT MAX(sr3.id) FROM scan_runs sr3
-                     WHERE sr3.repo_owner = ? AND sr3.repo_name = ?
-                 )
+             WHERE f.scan_run_id = (
+                 SELECT MAX(sr.id) FROM scan_runs sr
+                 WHERE sr.repo_owner = ? AND sr.repo_name = ?
              )",
         )
-        .bind(repo_owner)
-        .bind(repo_name)
-        .bind(repo_owner)
-        .bind(repo_name)
         .bind(repo_owner)
         .bind(repo_name)
         .fetch_all(&self.pool)
@@ -267,7 +269,7 @@ mod tests {
                 "2024-01-01T00:00:00Z",
                 None,
                 1,
-                "completed",
+                ScanStatus::Completed,
             )
             .await
             .unwrap();
@@ -287,14 +289,20 @@ mod tests {
     async fn insert_and_retrieve_findings() {
         let storage = test_storage().await;
         let run_id = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, "completed")
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
 
         let finding_id = storage
             .insert_finding(
                 run_id,
-                Some("ci.yml"),
                 "actions/checkout@v4",
                 Some("abc123"),
                 Some("GHSA-1234"),
@@ -323,13 +331,19 @@ mod tests {
 
         // First run
         let run1 = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, "completed")
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
         storage
             .insert_finding(
                 run1,
-                None,
                 "actions/checkout@v4",
                 Some("sha_old"),
                 None,
@@ -341,13 +355,19 @@ mod tests {
 
         // Second run
         let run2 = storage
-            .insert_scan_run("org", "repo", "2024-01-01T01:00:00Z", None, 2, "completed")
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T01:00:00Z",
+                None,
+                2,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
         storage
             .insert_finding(
                 run2,
-                None,
                 "actions/checkout@v4",
                 Some("sha_new"),
                 None,
@@ -408,7 +428,14 @@ mod tests {
     async fn insert_drift_event_persists() {
         let storage = test_storage().await;
         let run_id = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, "completed")
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
 
