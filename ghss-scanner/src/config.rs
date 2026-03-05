@@ -78,8 +78,7 @@ impl ScannerConfig {
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let contents =
             std::fs::read_to_string(path).context(format!("failed to read {}", path.display()))?;
-        let mut config: Self =
-            toml::from_str(&contents).context("failed to parse config")?;
+        let mut config: Self = toml::from_str(&contents).context("failed to parse config")?;
 
         expand_env_vars(&mut config)?;
         validate(&config)?;
@@ -158,10 +157,8 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
 pub fn resolve_config_path(cli_path: Option<&Path>) -> anyhow::Result<PathBuf> {
     let path = cli_path.map_or_else(
         || {
-            std::env::var("GHSS_SCANNER_CONFIG").map_or_else(
-                |_| PathBuf::from("/opt/ghss/config.toml"),
-                PathBuf::from,
-            )
+            std::env::var("GHSS_SCANNER_CONFIG")
+                .map_or_else(|_| PathBuf::from("/opt/ghss/config.toml"), PathBuf::from)
         },
         Path::to_path_buf,
     );

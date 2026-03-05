@@ -289,7 +289,14 @@ mod tests {
     async fn insert_and_retrieve_findings() {
         let storage = test_storage().await;
         let run_id = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, ScanStatus::Completed)
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
 
@@ -324,7 +331,14 @@ mod tests {
 
         // First run
         let run1 = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, ScanStatus::Completed)
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
         storage
@@ -341,7 +355,14 @@ mod tests {
 
         // Second run
         let run2 = storage
-            .insert_scan_run("org", "repo", "2024-01-01T01:00:00Z", None, 2, ScanStatus::Completed)
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T01:00:00Z",
+                None,
+                2,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
         storage
@@ -407,7 +428,14 @@ mod tests {
     async fn insert_drift_event_persists() {
         let storage = test_storage().await;
         let run_id = storage
-            .insert_scan_run("org", "repo", "2024-01-01T00:00:00Z", None, 1, ScanStatus::Completed)
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
             .await
             .unwrap();
 

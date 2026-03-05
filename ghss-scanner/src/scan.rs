@@ -60,15 +60,14 @@ pub async fn run_scan_cycle(
         .to_max_depth();
     let concurrency = pipeline.max_concurrency();
 
-    let outcomes: Vec<RepoOutcome> =
-        futures::stream::iter(repos.iter().map(|repo| {
-            let pipeline = pipeline.clone();
-            let client = client.clone();
-            async move { scan_repo_task(&client, repo, &pipeline, depth, concurrency, cycle).await }
-        }))
-        .buffer_unordered(max_repo_concurrency)
-        .collect()
-        .await;
+    let outcomes: Vec<RepoOutcome> = futures::stream::iter(repos.iter().map(|repo| {
+        let pipeline = pipeline.clone();
+        let client = client.clone();
+        async move { scan_repo_task(&client, repo, &pipeline, depth, concurrency, cycle).await }
+    }))
+    .buffer_unordered(max_repo_concurrency)
+    .collect()
+    .await;
 
     let mut results = Vec::new();
     let mut failures = Vec::new();
@@ -156,9 +155,9 @@ async fn discover_workflows(
         .iter()
         .filter_map(|entry| entry.get("name")?.as_str().map(String::from))
         .filter(|name| {
-            std::path::Path::new(name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml"))
+            std::path::Path::new(name).extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml")
+            })
         })
         .collect();
 

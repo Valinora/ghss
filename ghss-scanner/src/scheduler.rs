@@ -132,9 +132,7 @@ async fn persist_repo_result(
     cycle: u64,
     status: ScanStatus,
 ) -> anyhow::Result<()> {
-    let (owner, name) = repo_id
-        .split_once('/')
-        .unwrap_or((repo_id, "unknown"));
+    let (owner, name) = repo_id.split_once('/').unwrap_or((repo_id, "unknown"));
 
     let started_at = Utc::now().to_rfc3339();
 
@@ -216,8 +214,7 @@ async fn insert_findings(
             .map(|a| a.severity.as_str())
             .next()
             .map(String::from);
-        let serialized =
-            serde_json::to_string(node).context("failed to serialize AuditNode")?;
+        let serialized = serde_json::to_string(node).context("failed to serialize AuditNode")?;
 
         storage
             .insert_finding(
