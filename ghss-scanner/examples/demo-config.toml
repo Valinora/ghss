@@ -2,16 +2,33 @@
 # Usage: cargo run -p ghss-scanner -- --config ghss-scanner/examples/demo-config.toml -v
 
 [scanner]
-schedule = "*/30 * * * * *"   # every 30 seconds (6-field cron)
+# GitHub token — supports ${ENV_VAR} expansion
+github_token = "${GITHUB_TOKEN}"
+schedule = "*/5 * * * * *"   # every 5 seconds (6-field cron); use "*/30 * * * *" (5-field) for production
+max_repo_concurrency = 2     # process up to 2 repos in parallel (default: 1)
 
 [[repos]]
-owner = "my-org"
-name = "demo-app"
+owner = "actions"
+name = "checkout"
+
+[[repos]]
+owner = "astral-sh"
+name = "uv"
+workflows = ["ci.yml"]  # only scan specific workflows
 
 [pipeline]
-depth = "0"
-provider = "all"
-deps = false
+depth = "1"           # expand composite actions / reusable workflows 1 level deep
+provider = "all"      # advisory providers: "ghsa", "osv", or "all"
+deps = true           # scan action ecosystems and npm dependencies for vulnerabilities
+concurrency = 10      # pipeline stage concurrency (default: 10)
 
 [storage]
 url = "sqlite:///tmp/ghss-demo.db"
+
+# Optional: OpenTelemetry collector for traces
+# [telemetry]
+# endpoint = "http://otel-collector:4317"
+
+# Optional: HTTP health check endpoint
+# [health]
+# bind = "0.0.0.0:8080"
