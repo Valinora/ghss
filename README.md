@@ -133,6 +133,20 @@ endpoint = "http://otel-collector:4317"
 bind = "0.0.0.0:8080"
 ```
 
+## Challenges
+
+Everything started in `main`. Advisory lookups, ref resolution, composite expansion, dependency scanning, all in one place. It stopped scaling around the time I added the fourth concern.
+
+The fix was a `Stage` trait and a `Pipeline` that holds `Box<dyn Stage>` objects. Each audit concern lives in its own stage, the pipeline runs them in sequence, and adding a new one doesn't mean touching anything else.
+
+I went with dynamic dispatch over generics. Making the pipeline generic over async stages meant trait bounds and lifetime annotations on every function they touched. The signatures got bad enough that I stopped trying. Vtable overhead is irrelevant when every stage is bottlenecked on HTTP requests, so the trade was straightforward: confirmed readability over theoretical performance.
+
+## Roadmap
+
+- **More ecosystems.** Dependency scanning only covers npm right now. Cargo, Go modules, pip, Maven, and the rest of what OSV.dev tracks are on the list.
+- **GitHub App auth.** PATs work fine for individual use, but whether they're sufficient org-wide is an open question. Installation tokens with fine-grained permissions may be the answer.
+- **Scanner OTel traces.** Basic tracing is in place. Better span attributes, metrics, and context propagation would go a long way for long-running deployments.
+
 ## License
 
 MIT
