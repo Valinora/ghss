@@ -26,6 +26,23 @@ pub enum Ecosystem {
     Docker,
 }
 
+impl Ecosystem {
+    /// Returns the ecosystem string expected by the OSV.dev API.
+    pub fn osv_ecosystem(&self) -> &'static str {
+        match self {
+            Ecosystem::Npm => "npm",
+            Ecosystem::Cargo => "crates.io",
+            Ecosystem::Go => "Go",
+            Ecosystem::Pip => "PyPI",
+            Ecosystem::Maven => "Maven",
+            Ecosystem::Gradle => "Maven",
+            Ecosystem::RubyGems => "RubyGems",
+            Ecosystem::Composer => "Packagist",
+            Ecosystem::Docker => "Linux",
+        }
+    }
+}
+
 impl fmt::Display for Ecosystem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
