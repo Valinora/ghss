@@ -47,8 +47,12 @@ impl Stage for DependencyStage {
 
         for &ecosystem in &ecosystems {
             let result = match ecosystem {
-                Ecosystem::Npm => npm::fetch_npm_packages(&ctx.action, &ecosystems, &self.client).await,
-                Ecosystem::Go => go::fetch_go_packages(&ctx.action, &ecosystems, &self.client).await,
+                Ecosystem::Npm => {
+                    npm::fetch_npm_packages(&ctx.action, &ecosystems, &self.client).await
+                }
+                Ecosystem::Go => {
+                    go::fetch_go_packages(&ctx.action, &ecosystems, &self.client).await
+                }
                 _ => continue,
             };
 

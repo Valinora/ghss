@@ -1122,18 +1122,16 @@ async fn deps_flag_sends_correct_go_ecosystem_string() {
 
     Mock::given(method("GET"))
         .and(path("/test-org/composite-a/v1/go.mod"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("module example.com/a\n\ngo 1.21\n\nrequire golang.org/x/net v0.17.0\n"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "module example.com/a\n\ngo 1.21\n\nrequire golang.org/x/net v0.17.0\n",
+        ))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path("/test-org/leaf-action/v1/go.mod"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("module example.com/b\n\ngo 1.21\n"),
+            ResponseTemplate::new(200).set_body_string("module example.com/b\n\ngo 1.21\n"),
         )
         .mount(&server)
         .await;
