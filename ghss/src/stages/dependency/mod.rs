@@ -1,3 +1,4 @@
+mod go;
 mod npm;
 
 use std::sync::Arc;
@@ -37,19 +38,34 @@ impl DependencyStage {
 impl Stage for DependencyStage {
     #[instrument(skip(self, ctx), fields(action = %ctx.action))]
     async fn run(&self, ctx: &mut AuditContext) -> anyhow::Result<()> {
-        let ecosystems = ctx
+        let ecosystems: Vec<Ecosystem> = ctx
             .scan
             .as_ref()
-            .map_or(&[] as &[_], |s| s.ecosystems.as_slice());
+            .map_or_else(Vec::new, |s| s.ecosystems.clone());
 
-        let packages = match npm::fetch_npm_packages(&ctx.action, ecosystems, &self.client).await {
-            Ok(pkgs) => pkgs,
-            Err(e) => {
-                warn!(action = %ctx.action, error = %e, "failed to fetch dependencies");
-                ctx.record_error(self.name(), &e);
-                return Ok(());
+        let mut packages: Vec<(String, String, Ecosystem)> = Vec::new();
+
+        for &ecosystem in &ecosystems {
+            let result = match ecosystem {
+                Ecosystem::Npm => {
+                    npm::fetch_npm_packages(&ctx.action, &ecosystems, &self.client).await
+                }
+                Ecosystem::Go => {
+                    go::fetch_go_packages(&ctx.action, &ecosystems, &self.client).await
+                }
+                _ => continue,
+            };
+
+            match result {
+                Ok(pkgs) => {
+                    packages.extend(pkgs.into_iter().map(|(n, v)| (n, v, ecosystem)));
+                }
+                Err(e) => {
+                    warn!(action = %ctx.action, error = %e, "failed to fetch {} dependencies", ecosystem);
+                    ctx.record_error(self.name(), &e);
+                }
             }
-        };
+        }
 
         if packages.is_empty() {
             debug!(action = %ctx.action, "no ecosystems to scan for dependencies");
@@ -58,11 +74,13 @@ impl Stage for DependencyStage {
 
         let mut reports = Vec::new();
 
-        for (name, version) in packages {
+        for (name, version, ecosystem) in packages {
+            let osv_eco = ecosystem.osv_ecosystem().to_string();
             let results = join_all(self.providers.iter().map(|p| {
                 let p = p.clone();
                 let pkg = name.clone();
-                async move { (p.name().to_string(), p.query(&pkg, "npm").await) }
+                let eco = osv_eco.clone();
+                async move { (p.name().to_string(), p.query(&pkg, &eco).await) }
             }))
             .await;
 
@@ -75,7 +93,7 @@ impl Stage for DependencyStage {
                             package = %name,
                             provider = %provider_name,
                             error = %e,
-                            "failed to query advisories for npm package"
+                            "failed to query advisories for {} package", ecosystem
                         );
                         ctx.record_error(self.name(), format!("{provider_name}: {name}: {e}"));
                     }
@@ -87,7 +105,7 @@ impl Stage for DependencyStage {
                 reports.push(DependencyReport {
                     package: name,
                     version,
-                    ecosystem: Ecosystem::Npm,
+                    ecosystem,
                     advisories,
                 });
             }
