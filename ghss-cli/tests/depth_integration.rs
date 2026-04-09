@@ -948,3 +948,244 @@ async fn fail_on_severity_still_outputs_json() {
         serde_json::from_str(&stdout).expect("stdout should still be valid JSON");
     assert!(parsed.is_array(), "should be a JSON array");
 }
+
+// ---------------------------------------------------------------------------
+// Go dependency scanning tests
+// ---------------------------------------------------------------------------
+
+async fn setup_go_deps_mock_server() -> MockServer {
+    let server = MockServer::start().await;
+
+    // action.yml mocks for both test actions
+    Mock::given(method("GET"))
+        .and(path("/test-org/composite-a/v1/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Composite A\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/test-org/leaf-action/v1/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // go.mod for composite-a
+    Mock::given(method("GET"))
+        .and(path("/test-org/composite-a/v1/go.mod"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "module github.com/test-org/composite-a\n\n\
+             go 1.21\n\n\
+             require (\n\
+             \tgithub.com/gin-gonic/gin v1.9.1\n\
+             \tgolang.org/x/net v0.17.0 // indirect\n\
+             )\n",
+        ))
+        .mount(&server)
+        .await;
+
+    // go.mod for leaf-action (no dependencies)
+    Mock::given(method("GET"))
+        .and(path("/test-org/leaf-action/v1/go.mod"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("module github.com/test-org/leaf-action\n\ngo 1.21\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // GHSA advisory endpoint: return empty
+    Mock::given(method("GET"))
+        .and(path("/advisories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    // GraphQL endpoint for scan: shows Go ecosystem
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "languages": {
+                        "edges": [
+                            {"size": 40000, "node": {"name": "Go"}}
+                        ]
+                    },
+                    "packageJson": null,
+                    "cargoToml": null,
+                    "goMod": {"__typename": "Blob"},
+                    "requirementsTxt": null,
+                    "pyprojectToml": null,
+                    "pomXml": null,
+                    "buildGradle": null,
+                    "gemfile": null,
+                    "composerJson": null,
+                    "dockerfile": null
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // OSV query for gin-gonic/gin: return a vulnerability
+    Mock::given(method("POST"))
+        .and(path("/osv-query"))
+        .and(body_string_contains("gin-gonic/gin"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "vulns": [{
+                "id": "GHSA-go-gin-0001",
+                "summary": "Test vulnerability in gin framework",
+                "references": [
+                    {"type": "ADVISORY", "url": "https://example.com/gin-vuln"}
+                ],
+                "affected": [{
+                    "ranges": [{
+                        "type": "ECOSYSTEM",
+                        "events": [
+                            {"introduced": "0"},
+                            {"fixed": "1.9.2"}
+                        ]
+                    }]
+                }],
+                "database_specific": {"severity": "HIGH"}
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    // OSV: return empty for everything else
+    Mock::given(method("POST"))
+        .and(path("/osv-query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(0..)
+        .mount(&server)
+        .await;
+
+    server
+}
+
+#[tokio::test]
+async fn deps_flag_shows_go_dependency_vulnerability() {
+    let server = setup_go_deps_mock_server().await;
+    let stdout = stdout_of_mock_with_token(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--provider",
+            "all",
+            "--deps",
+        ],
+    );
+
+    assert!(
+        stdout.contains("dependency vulnerabilities:"),
+        "should show dependency vulnerabilities section, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("gin-gonic/gin"),
+        "should mention gin dependency, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("GHSA-go-gin-0001"),
+        "should show gin advisory ID, got:\n{stdout}"
+    );
+}
+
+#[tokio::test]
+async fn deps_flag_sends_correct_go_ecosystem_string() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/test-org/composite-a/v1/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Composite A\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/test-org/leaf-action/v1/action.yml"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: Leaf Action\nruns:\n  using: node20\n  main: index.js\n"),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/test-org/composite-a/v1/go.mod"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("module example.com/a\n\ngo 1.21\n\nrequire golang.org/x/net v0.17.0\n"),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/test-org/leaf-action/v1/go.mod"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("module example.com/b\n\ngo 1.21\n"),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/advisories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "languages": { "edges": [{"size": 40000, "node": {"name": "Go"}}] },
+                    "packageJson": null,
+                    "cargoToml": null,
+                    "goMod": {"__typename": "Blob"},
+                    "requirementsTxt": null,
+                    "pyprojectToml": null,
+                    "pomXml": null,
+                    "buildGradle": null,
+                    "gemfile": null,
+                    "composerJson": null,
+                    "dockerfile": null
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // Only match OSV queries with correct "Go" ecosystem (capital G)
+    let osv_mock = Mock::given(method("POST"))
+        .and(path("/osv-query"))
+        .and(body_string_contains(r#""ecosystem":"Go""#))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1..)
+        .mount_as_scoped(&server)
+        .await;
+
+    let _stdout = stdout_of_mock_with_token(
+        &server,
+        &[
+            "--file",
+            &fixture("depth-test-workflow.yml"),
+            "--provider",
+            "osv",
+            "--deps",
+        ],
+    );
+
+    // Scoped mock verifies that at least one request matched "ecosystem":"Go"
+    drop(osv_mock);
+}
