@@ -462,3 +462,53 @@ fn fail_on_severity_rejects_invalid_value() {
         "error should mention unknown severity, got: {stderr}"
     );
 }
+
+// ── GitHub App auth flag tests ──
+
+#[test]
+fn app_auth_and_token_are_mutually_exclusive() {
+    let output = ghss()
+        .args([
+            "--file",
+            &fixture("sample-workflow.yml"),
+            "--github-token",
+            "ghp_fake",
+            "--github-app-id",
+            "123",
+        ])
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITHUB_APP_ID")
+        .env_remove("GITHUB_APP_INSTALLATION_ID")
+        .env_remove("GITHUB_APP_PRIVATE_KEY_PATH")
+        .output()
+        .expect("failed to execute");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("cannot specify both"),
+        "expected mutual exclusivity error, got: {stderr}"
+    );
+}
+
+#[test]
+fn app_auth_requires_all_three_flags() {
+    let output = ghss()
+        .args([
+            "--file",
+            &fixture("sample-workflow.yml"),
+            "--github-app-id",
+            "123",
+        ])
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITHUB_APP_ID")
+        .env_remove("GITHUB_APP_INSTALLATION_ID")
+        .env_remove("GITHUB_APP_PRIVATE_KEY_PATH")
+        .output()
+        .expect("failed to execute");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--github-app-installation-id is required"),
+        "expected missing flag error, got: {stderr}"
+    );
+}

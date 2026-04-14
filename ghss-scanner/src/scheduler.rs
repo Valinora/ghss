@@ -33,6 +33,21 @@ impl Scheduler {
     }
 }
 
+/// Build a `GitHubClient` from the scanner config section, using either a PAT or App credentials.
+fn build_github_client(scanner: &crate::config::ScannerSection) -> anyhow::Result<GitHubClient> {
+    if let Some(ref app) = scanner.github_app {
+        let pem_key = std::fs::read(&app.private_key_path).with_context(|| {
+            format!(
+                "failed to read GitHub App private key: {}",
+                app.private_key_path
+            )
+        })?;
+        GitHubClient::from_app(app.app_id, app.installation_id, &pem_key)
+    } else {
+        Ok(GitHubClient::new(scanner.github_token.clone()))
+    }
+}
+
 /// Run the scan loop. If `once` is true, run one cycle and return.
 /// Otherwise, create a Scheduler and loop on the cron schedule with
 /// graceful shutdown on SIGTERM/SIGINT.
@@ -43,7 +58,7 @@ pub async fn run_loop(config: &ScannerConfig, once: bool) -> anyhow::Result<()> 
     let storage = Storage::connect(&config.storage.url).await?;
     storage.migrate().await?;
 
-    let client = GitHubClient::new(config.scanner.github_token.clone());
+    let client = build_github_client(&config.scanner)?;
 
     let mut cycle: u64 = 0;
 
