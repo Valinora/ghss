@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use clap::Parser;
 use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -52,6 +52,18 @@ struct Cli {
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
 
+    /// GitHub App ID (alternative to --github-token)
+    #[arg(long, env = "GITHUB_APP_ID")]
+    github_app_id: Option<u64>,
+
+    /// GitHub App installation ID (alternative to --github-token)
+    #[arg(long, env = "GITHUB_APP_INSTALLATION_ID")]
+    github_app_installation_id: Option<u64>,
+
+    /// Path to GitHub App private key PEM file (alternative to --github-token)
+    #[arg(long, env = "GITHUB_APP_PRIVATE_KEY_PATH")]
+    github_app_private_key_path: Option<PathBuf>,
+
     #[command(flatten)]
     verbosity: Verbosity<WarnLevel>,
 }
@@ -93,7 +105,7 @@ async fn run(args: &Cli) -> anyhow::Result<i32> {
 
     let contents = std::fs::read_to_string(&args.file)?;
     let actions = ghss::parse_actions(&contents)?;
-    let client = GitHubClient::new(args.github_token.clone());
+    let client = build_client(args)?;
 
     // Filter root actions by --select
     let actions = match &args.select {
@@ -157,4 +169,31 @@ async fn run(args: &Cli) -> anyhow::Result<i32> {
     }
 
     Ok(0)
+}
+
+fn build_client(args: &Cli) -> anyhow::Result<GitHubClient> {
+    let has_app = args.github_app_id.is_some()
+        || args.github_app_installation_id.is_some()
+        || args.github_app_private_key_path.is_some();
+
+    if args.github_token.is_some() && has_app {
+        bail!("cannot specify both --github-token and GitHub App credentials");
+    }
+
+    if has_app {
+        let app_id = args
+            .github_app_id
+            .context("--github-app-id is required when using GitHub App authentication")?;
+        let installation_id = args.github_app_installation_id.context(
+            "--github-app-installation-id is required when using GitHub App authentication",
+        )?;
+        let key_path = args.github_app_private_key_path.as_ref().context(
+            "--github-app-private-key-path is required when using GitHub App authentication",
+        )?;
+        let pem_key = std::fs::read(key_path)
+            .with_context(|| format!("failed to read private key: {}", key_path.display()))?;
+        GitHubClient::from_app(app_id, installation_id, &pem_key)
+    } else {
+        Ok(GitHubClient::new(args.github_token.clone()))
+    }
 }

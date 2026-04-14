@@ -9,9 +9,18 @@ inputs:
     description: 'Minimum severity to fail on: critical, high, medium, low'
     required: true
   github-token:
-    description: 'GitHub token for API access'
+    description: 'GitHub token for API access (mutually exclusive with github-app-* inputs)'
     required: false
     default: ${{ github.token }}
+  github-app-id:
+    description: 'GitHub App ID (alternative to github-token)'
+    required: false
+  github-app-installation-id:
+    description: 'GitHub App installation ID (alternative to github-token)'
+    required: false
+  github-app-private-key:
+    description: 'GitHub App private key PEM content (alternative to github-token)'
+    required: false
   provider:
     description: 'Advisory provider: ghsa, osv, all'
     required: false
@@ -58,10 +67,22 @@ runs:
         esac
         echo "binary=${binary}" >> "$GITHUB_OUTPUT"
 
+    - name: Write GitHub App private key
+      id: app-key
+      if: ${{ inputs.github-app-private-key != '' }}
+      shell: bash
+      run: |
+        key_file="$(mktemp /tmp/ghss-app-key-XXXXXX.pem)"
+        printf '%s\n' "$APP_PRIVATE_KEY" > "$key_file"
+        chmod 600 "$key_file"
+        echo "path=${key_file}" >> "$GITHUB_OUTPUT"
+      env:
+        APP_PRIVATE_KEY: ${{ inputs.github-app-private-key }}
+
     - name: Download ghss binary
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ inputs.github-app-id == '' && inputs.github-token || github.token }}
       run: |
         version="${{ inputs.version }}"
         if [ "$version" = "latest" ]; then
@@ -75,7 +96,7 @@ runs:
     - name: Run ghss audit
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-app-id == '' && inputs.github-token || '' }}
       run: |
         args=(
           --file "${{ steps.workflow-path.outputs.path }}"
@@ -86,4 +107,16 @@ runs:
         if [ "${{ inputs.deps }}" = "true" ]; then
           args+=(--deps)
         fi
+        if [ -n "${{ inputs.github-app-id }}" ]; then
+          args+=(
+            --github-app-id "${{ inputs.github-app-id }}"
+            --github-app-installation-id "${{ inputs.github-app-installation-id }}"
+            --github-app-private-key-path "${{ steps.app-key.outputs.path }}"
+          )
+        fi
         /tmp/ghss/ghss "${args[@]}"
+
+    - name: Cleanup private key
+      if: ${{ always() && steps.app-key.outputs.path != '' }}
+      shell: bash
+      run: rm -f "${{ steps.app-key.outputs.path }}"
