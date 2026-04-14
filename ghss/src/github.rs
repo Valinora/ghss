@@ -526,10 +526,7 @@ mod tests {
         // iat should be backdated ~60s
         assert!((now - 65..now - 55).contains(&iat), "iat={iat} now={now}");
         // exp should be ~10 minutes from now
-        assert!(
-            (now + 535..now + 605).contains(&exp),
-            "exp={exp} now={now}"
-        );
+        assert!((now + 535..now + 605).contains(&exp), "exp={exp} now={now}");
     }
 
     #[test]
@@ -648,7 +645,10 @@ mod tests {
         // Mock an API endpoint — verify the minted token is forwarded
         Mock::given(method("GET"))
             .and(path("/repos/test/repo/contents/file.txt"))
-            .and(header_regex("authorization", r"^Bearer ghs_test_token_abc$"))
+            .and(header_regex(
+                "authorization",
+                r"^Bearer ghs_test_token_abc$",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content": "ok"})))
             .mount(&mock_server)
             .await;

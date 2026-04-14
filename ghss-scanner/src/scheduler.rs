@@ -34,9 +34,7 @@ impl Scheduler {
 }
 
 /// Build a `GitHubClient` from the scanner config section, using either a PAT or App credentials.
-fn build_github_client(
-    scanner: &crate::config::ScannerSection,
-) -> anyhow::Result<GitHubClient> {
+fn build_github_client(scanner: &crate::config::ScannerSection) -> anyhow::Result<GitHubClient> {
     if let Some(ref app) = scanner.github_app {
         let pem_key = std::fs::read(&app.private_key_path).with_context(|| {
             format!(
