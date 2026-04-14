@@ -16,8 +16,27 @@ pub struct ScannerConfig {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GitHubAppSection {
+    pub app_id: u64,
+    pub installation_id: u64,
+    pub private_key_path: String,
+}
+
+impl std::fmt::Debug for GitHubAppSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubAppSection")
+            .field("app_id", &self.app_id)
+            .field("installation_id", &self.installation_id)
+            .field("private_key_path", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScannerSection {
     pub github_token: Option<String>,
+    pub github_app: Option<GitHubAppSection>,
     pub schedule: String,
     #[serde(default)]
     pub max_repo_concurrency: Option<usize>,
@@ -32,6 +51,7 @@ impl std::fmt::Debug for ScannerSection {
         };
         f.debug_struct("ScannerSection")
             .field("github_token", &token_display)
+            .field("github_app", &self.github_app)
             .field("schedule", &self.schedule)
             .field("max_repo_concurrency", &self.max_repo_concurrency)
             .finish()
@@ -87,7 +107,7 @@ impl ScannerConfig {
     }
 }
 
-/// Expand `${VAR_NAME}` patterns in the `github_token` field.
+/// Expand `${VAR_NAME}` patterns in credential fields.
 fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
     if let Some(ref token) = config.scanner.github_token
         && let Some(var_name) = token.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
@@ -97,6 +117,20 @@ fn expand_env_vars(config: &mut ScannerConfig) -> anyhow::Result<()> {
         ))?;
         config.scanner.github_token = Some(value);
     }
+
+    if let Some(ref mut app) = config.scanner.github_app
+        && let Some(var_name) = app
+            .private_key_path
+            .strip_prefix("${")
+            .and_then(|s| s.strip_suffix('}'))
+    {
+        let var_name = var_name.to_string();
+        let value = std::env::var(&var_name).context(format!(
+            "env var {var_name} referenced in github_app.private_key_path is not set"
+        ))?;
+        app.private_key_path = value;
+    }
+
     Ok(())
 }
 
@@ -120,6 +154,14 @@ fn validate(config: &ScannerConfig) -> anyhow::Result<()> {
         "invalid cron expression: {}",
         config.scanner.schedule
     ))?;
+
+    // Validate auth config: token and app are mutually exclusive
+    if config.scanner.github_token.is_some() && config.scanner.github_app.is_some() {
+        bail!(
+            "cannot specify both github_token and [scanner.github_app]; \
+             use one authentication method"
+        );
+    }
 
     // Validate concurrency fields
     if config.scanner.max_repo_concurrency == Some(0) {
@@ -569,5 +611,132 @@ url = "sqlite:///tmp/ghss.db"
             err.to_string().contains("pipeline concurrency"),
             "expected pipeline concurrency error, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_github_app_config() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[scanner.github_app]
+app_id = 12345
+installation_id = 67890
+private_key_path = "/path/to/key.pem"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "ghsa"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let app = config.scanner.github_app.unwrap();
+        assert_eq!(app.app_id, 12345);
+        assert_eq!(app.installation_id, 67890);
+        assert_eq!(app.private_key_path, "/path/to/key.pem");
+        assert!(config.scanner.github_token.is_none());
+    }
+
+    #[test]
+    fn test_github_app_and_token_rejected() {
+        let content = r#"
+[scanner]
+github_token = "ghp_test"
+schedule = "0 * * * *"
+
+[scanner.github_app]
+app_id = 1
+installation_id = 1
+private_key_path = "/key.pem"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("cannot specify both"),
+            "expected mutual exclusivity error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_github_app_missing_field() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[scanner.github_app]
+app_id = 1
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        let f = write_temp_config(content);
+        let err = ScannerConfig::from_file(f.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("missing field") || msg.contains("installation_id"),
+            "expected missing field error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_github_app_env_var_expansion() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[scanner.github_app]
+app_id = 1
+installation_id = 2
+private_key_path = "${GHSS_TEST_KEY_PATH}"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+"#;
+        unsafe { std::env::set_var("GHSS_TEST_KEY_PATH", "/expanded/key.pem") };
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert_eq!(
+            config.scanner.github_app.unwrap().private_key_path,
+            "/expanded/key.pem"
+        );
+        unsafe { std::env::remove_var("GHSS_TEST_KEY_PATH") };
     }
 }

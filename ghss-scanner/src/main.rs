@@ -47,12 +47,14 @@ async fn main() -> anyhow::Result<()> {
     let config_path = config::resolve_config_path(args.config.as_deref())?;
     let config = config::ScannerConfig::from_file(&config_path)?;
 
-    let token_status = if config.scanner.github_token.is_some() {
-        "<set>"
+    let auth_status = if config.scanner.github_app.is_some() {
+        "github-app"
+    } else if config.scanner.github_token.is_some() {
+        "token"
     } else {
-        "<unset>"
+        "none"
     };
-    tracing::debug!(?config_path, github_token = token_status, "Config loaded");
+    tracing::debug!(?config_path, auth = auth_status, "Config loaded");
     tracing::debug!(?config, "Parsed config");
 
     // Enter scan loop (handles DB connect, migrations, scheduling, signal handling, cleanup)
