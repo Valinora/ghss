@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "ghss"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "ghss-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "ghss-scanner"
-version = "0.4.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
