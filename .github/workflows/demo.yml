@@ -1,0 +1,25 @@
+name: Demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  composite-expansion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit this workflow with ghss
+        uses: Valinora/ghss@6eb702ca5ba2fe10ed214cca00cb4ade1e4bda96
+        with:
+          severity-threshold: critical
+          depth: unlimited
+      - name: Get changed files (composite action — expands at depth 1)
+        uses: tj-actions/changed-files@v35
+
+  reusable-workflow:
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "deadbeef  artifact.tar.gz"
