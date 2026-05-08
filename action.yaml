@@ -34,9 +34,9 @@ inputs:
     required: false
     default: 'false'
   version:
-    description: 'ghss release version to download (e.g. "v0.1.0" or "latest")'
+    description: 'ghss release tag to download (e.g. "ghss-cli-v0.2.0" or "latest")'
     required: false
-    default: 'latest'
+    default: 'ghss-cli-v0.2.0'
 
 runs:
   using: 'composite'
