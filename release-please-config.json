@@ -5,15 +5,9 @@
   "include-v-in-tag": true,
   "separate-pull-requests": false,
   "packages": {
-    "ghss": {
-      "release-as": "0.2.0"
-    },
-    "ghss-cli": {
-      "release-as": "0.2.0"
-    },
-    "ghss-scanner": {
-      "release-as": "0.2.0"
-    }
+    "ghss": {},
+    "ghss-cli": {},
+    "ghss-scanner": {}
   },
   "plugins": [
     {
