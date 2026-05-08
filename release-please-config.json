@@ -1,13 +1,19 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
-  "include-component-in-tag": false,
+  "include-component-in-tag": true,
   "include-v-in-tag": true,
   "separate-pull-requests": false,
   "packages": {
-    "ghss": {},
-    "ghss-cli": {},
-    "ghss-scanner": {}
+    "ghss": {
+      "release-as": "0.2.0"
+    },
+    "ghss-cli": {
+      "release-as": "0.2.0"
+    },
+    "ghss-scanner": {
+      "release-as": "0.2.0"
+    }
   },
   "plugins": [
     {

@@ -5,8 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag to build (e.g. v1.2.3)'
+      version:
+        description: 'Release version to build (e.g. 1.2.3)'
         required: true
         type: string
 
@@ -22,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.resolve.outputs.should_release }}
-      tag_name: ${{ steps.resolve.outputs.tag_name }}
+      cli_tag: ${{ steps.resolve.outputs.cli_tag }}
+      scanner_tag: ${{ steps.resolve.outputs.scanner_tag }}
     steps:
       - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
         id: release
@@ -35,11 +36,14 @@ jobs:
         id: resolve
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
             echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "tag_name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "cli_tag=ghss-cli-v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "scanner_tag=ghss-scanner-v${VERSION}" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=${{ steps.release.outputs.releases_created }}" >> "$GITHUB_OUTPUT"
-            echo "tag_name=${{ steps.release.outputs['ghss--tag_name'] }}" >> "$GITHUB_OUTPUT"
+            echo "cli_tag=${{ steps.release.outputs['ghss-cli--tag_name'] }}" >> "$GITHUB_OUTPUT"
+            echo "scanner_tag=${{ steps.release.outputs['ghss-scanner--tag_name'] }}" >> "$GITHUB_OUTPUT"
           fi
 
   build-cli:
@@ -134,7 +138,7 @@ jobs:
           platforms: linux/amd64
           provenance: false
           push: true
-          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-amd64
+          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.scanner_tag }}-linux-amd64
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker-linux/amd64
           cache-to: type=gha,scope=docker-linux/amd64,mode=max
@@ -186,7 +190,7 @@ jobs:
           platforms: linux/arm64
           provenance: false
           push: true
-          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-arm64
+          tags: ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.scanner_tag }}-linux-arm64
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker-linux/arm64
           cache-to: type=gha,scope=docker-linux/arm64,mode=max
@@ -221,8 +225,8 @@ jobs:
       - name: Parse version from tag
         id: version
         run: |
-          TAG="${{ needs.release-please.outputs.tag_name }}"
-          VERSION="${TAG#v}"
+          TAG="${{ needs.release-please.outputs.scanner_tag }}"
+          VERSION="${TAG#ghss-scanner-v}"
           echo "major=${VERSION%%.*}" >> "$GITHUB_OUTPUT"
           REST="${VERSION#*.}"
           echo "minor=${REST%%.*}" >> "$GITHUB_OUTPUT"
@@ -243,8 +247,8 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-amd64 \
-            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.tag_name }}-linux-arm64
+            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.scanner_tag }}-linux-amd64 \
+            ghcr.io/valinora/ghss-scanner:${{ needs.release-please.outputs.scanner_tag }}-linux-arm64
 
       - name: Inspect manifest
         id: inspect
@@ -278,4 +282,4 @@ jobs:
       - name: Upload assets to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" ghss-* checksums-sha256.txt --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "${{ needs.release-please.outputs.cli_tag }}" ghss-* checksums-sha256.txt --repo "$GITHUB_REPOSITORY"
