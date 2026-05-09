@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::action_ref::ActionRef;
@@ -5,6 +7,16 @@ use crate::advisory::{Advisory, Severity};
 use crate::context::AuditContext;
 use crate::stages::ScanResult;
 use crate::stages::dependency::DependencyReport;
+
+pub mod sarif;
+
+/// Output format selector for the formatter factory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Text,
+    Json,
+    Sarif,
+}
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionEntry {
@@ -197,11 +209,11 @@ fn collect_violations_recursive(
     }
 }
 
-pub fn formatter(json: bool) -> Box<dyn OutputFormatter> {
-    if json {
-        Box::new(JsonOutput)
-    } else {
-        Box::new(TextOutput)
+pub fn formatter(format: OutputFormat, workflow_path: PathBuf) -> Box<dyn OutputFormatter> {
+    match format {
+        OutputFormat::Text => Box::new(TextOutput),
+        OutputFormat::Json => Box::new(JsonOutput),
+        OutputFormat::Sarif => Box::new(sarif::SarifOutput::new(workflow_path)),
     }
 }
 
@@ -349,7 +361,7 @@ mod tests {
 
     #[test]
     fn factory_returns_json() {
-        let f = formatter(true);
+        let f = formatter(OutputFormat::Json, PathBuf::from("workflow.yml"));
         let nodes = vec![leaf_node(sample_entry())];
         let mut buf = Vec::new();
         f.write_results(&nodes, &mut buf).unwrap();
@@ -360,13 +372,29 @@ mod tests {
 
     #[test]
     fn factory_returns_text() {
-        let f = formatter(false);
+        let f = formatter(OutputFormat::Text, PathBuf::from("workflow.yml"));
         let nodes = vec![leaf_node(sample_entry())];
         let mut buf = Vec::new();
         f.write_results(&nodes, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("actions/checkout@v4"));
         assert!(output.contains("advisories: none"));
+    }
+
+    #[test]
+    fn factory_returns_sarif() {
+        let f = formatter(
+            OutputFormat::Sarif,
+            PathBuf::from(".github/workflows/ci.yml"),
+        );
+        let nodes = vec![leaf_node(sample_entry())];
+        let mut buf = Vec::new();
+        f.write_results(&nodes, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["version"], "2.1.0");
+        assert!(parsed["$schema"].is_string());
+        assert!(parsed["runs"].is_array());
     }
 
     #[test]
