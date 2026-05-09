@@ -515,19 +515,34 @@ fn app_auth_requires_all_three_flags() {
 
 #[test]
 fn format_sarif_round_trips_through_serde_sarif() {
-    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let stdout = stdout_of(&[
+        "--file",
+        &fixture("vulnerable-workflow.yml"),
+        "--format",
+        "sarif",
+    ]);
     let sarif: serde_sarif::sarif::Sarif =
         serde_json::from_str(&stdout).expect("output must parse as SARIF");
-    assert_eq!(sarif.version, serde_json::Value::String("2.1.0".to_string()));
+    assert_eq!(
+        sarif.version,
+        serde_json::Value::String("2.1.0".to_string())
+    );
     assert_eq!(sarif.runs.len(), 1);
     assert_eq!(sarif.runs[0].tool.driver.name, "ghss");
 }
 
 #[test]
 fn format_sarif_emits_two_rules_in_driver() {
-    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let stdout = stdout_of(&[
+        "--file",
+        &fixture("vulnerable-workflow.yml"),
+        "--format",
+        "sarif",
+    ]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let rules = parsed["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+    let rules = parsed["runs"][0]["tool"]["driver"]["rules"]
+        .as_array()
+        .unwrap();
     assert_eq!(rules.len(), 2);
     let ids: Vec<&str> = rules.iter().map(|r| r["id"].as_str().unwrap()).collect();
     assert!(ids.contains(&"ghss/vulnerable-action"));
@@ -536,7 +551,12 @@ fn format_sarif_emits_two_rules_in_driver() {
 
 #[test]
 fn format_sarif_artifact_location_uses_supplied_path() {
-    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let stdout = stdout_of(&[
+        "--file",
+        &fixture("vulnerable-workflow.yml"),
+        "--format",
+        "sarif",
+    ]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let results = parsed["runs"][0]["results"].as_array().unwrap();
     if !results.is_empty() {

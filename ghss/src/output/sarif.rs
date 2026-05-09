@@ -84,7 +84,11 @@ fn collect_results(
     let path_descriptor = if ancestors.is_empty() {
         action_str.clone()
     } else {
-        format!("{} (via {} → {action_str})", action_str, ancestors.join(" → "))
+        format!(
+            "{} (via {} → {action_str})",
+            action_str,
+            ancestors.join(" → ")
+        )
     };
 
     for advisory in &node.entry.advisories {
@@ -106,7 +110,12 @@ fn collect_results(
             let dep_subject = format!("{}@{}", dep.package, dep.version);
             let message = format!(
                 "{} — {}@{} ({} dep of {}): {}",
-                advisory.id, dep.package, dep.version, dep.ecosystem, path_descriptor, advisory.summary
+                advisory.id,
+                dep.package,
+                dep.version,
+                dep.ecosystem,
+                path_descriptor,
+                advisory.summary
             );
             out.push(make_dep_result(
                 workflow_uri,
@@ -180,7 +189,9 @@ fn finish_result(
         .end_column(1i64)
         .build();
 
-    let artifact = ArtifactLocation::builder().uri(workflow_uri.to_string()).build();
+    let artifact = ArtifactLocation::builder()
+        .uri(workflow_uri.to_string())
+        .build();
 
     let physical = PhysicalLocation::builder()
         .artifact_location(artifact)
@@ -194,7 +205,9 @@ fn finish_result(
         "security-severity".to_string(),
         serde_json::Value::String(security_severity.to_string()),
     );
-    let result_props = PropertyBag::builder().additional_properties(additional).build();
+    let result_props = PropertyBag::builder()
+        .additional_properties(additional)
+        .build();
 
     let mut fps: BTreeMap<String, String> = BTreeMap::new();
     fps.insert(
@@ -488,8 +501,7 @@ mod tests {
 
         let sarif = build_sarif_log(&nodes, Path::new(".github/workflows/ci.yml"), "test");
         let json = serde_json::to_value(&sarif).unwrap();
-        let fp = &json["runs"][0]["results"][0]["partialFingerprints"]
-            ["primaryLocationLineHash"];
+        let fp = &json["runs"][0]["results"][0]["partialFingerprints"]["primaryLocationLineHash"];
         let fp_str = fp.as_str().unwrap();
         // SHA-256 hex == 64 chars
         assert_eq!(fp_str.len(), 64);
