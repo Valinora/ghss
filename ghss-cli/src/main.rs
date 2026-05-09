@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use clap_verbosity_flag::{Verbosity, WarnLevel};
 use tracing_subscriber::{EnvFilter, fmt};
 
 use ghss::depth::DepthLimit;
 use ghss::github::GitHubClient;
-use ghss::output::{self, AuditNode};
+use ghss::output::{self, AuditNode, OutputFormat};
 use ghss::pipeline::PipelineBuilder;
 use ghss::providers;
 use ghss::stages::{
@@ -15,6 +15,25 @@ use ghss::stages::{
     WorkflowExpandStage,
 };
 use ghss::walker::Walker;
+
+/// Output format for audit results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum CliOutputFormat {
+    Text,
+    Json,
+    Sarif,
+}
+
+impl From<CliOutputFormat> for OutputFormat {
+    fn from(value: CliOutputFormat) -> Self {
+        match value {
+            CliOutputFormat::Text => OutputFormat::Text,
+            CliOutputFormat::Json => OutputFormat::Json,
+            CliOutputFormat::Sarif => OutputFormat::Sarif,
+        }
+    }
+}
 
 /// Audit GitHub Actions workflows for third-party action usage
 #[derive(Parser)]
@@ -28,8 +47,14 @@ struct Cli {
     #[arg(long, default_value = "all")]
     provider: String,
 
-    /// Output results and logs in JSON format
-    #[arg(long)]
+    /// Output format for results (text, json, sarif).
+    /// SARIF output expects --file to be a repo-relative path so the
+    /// emitted artifactLocation is usable by GitHub Code Scanning.
+    #[arg(long, value_enum, default_value_t = CliOutputFormat::Text, conflicts_with = "json")]
+    format: CliOutputFormat,
+
+    /// Deprecated: use --format json. Kept for back-compat with existing scripts.
+    #[arg(long, hide = true)]
     json: bool,
 
     /// Recursive expansion depth for composite actions and reusable workflows (0 = no expansion, "unlimited" = full traversal)
@@ -70,7 +95,13 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
+
+    // Back-compat: --json overrides --format. clap's `conflicts_with` already
+    // rejects passing both, so this only fires when only --json is set.
+    if args.json {
+        args.format = CliOutputFormat::Json;
+    }
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         let level = args.verbosity.tracing_level_filter();
@@ -83,10 +114,18 @@ async fn main() {
         .with_target(false)
         .without_time();
 
-    if args.json {
+    // Use JSON-formatted log output to stderr whenever the result format is
+    // machine-readable, so operators piping --format json or --format sarif
+    // also get structured logs.
+    let structured_logs = matches!(args.format, CliOutputFormat::Json | CliOutputFormat::Sarif);
+    if structured_logs {
         base.json().init();
     } else {
         base.init();
+    }
+
+    if args.json {
+        tracing::warn!("--json is deprecated; use --format json instead");
     }
 
     match run(&args).await {
@@ -145,7 +184,7 @@ async fn run(args: &Cli) -> anyhow::Result<i32> {
     let walker = Walker::new(pipeline, args.depth.to_max_depth(), max_concurrency);
     let nodes: Vec<AuditNode> = walker.walk(actions).await;
 
-    let formatter = output::formatter(args.json);
+    let formatter = output::formatter(OutputFormat::from(args.format), args.file.clone());
     formatter
         .write_results(&nodes, &mut std::io::stdout().lock())
         .expect("failed to write output");

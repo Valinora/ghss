@@ -512,3 +512,63 @@ fn app_auth_requires_all_three_flags() {
         "expected missing flag error, got: {stderr}"
     );
 }
+
+#[test]
+fn format_sarif_round_trips_through_serde_sarif() {
+    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let sarif: serde_sarif::sarif::Sarif =
+        serde_json::from_str(&stdout).expect("output must parse as SARIF");
+    assert_eq!(sarif.version, serde_json::Value::String("2.1.0".to_string()));
+    assert_eq!(sarif.runs.len(), 1);
+    assert_eq!(sarif.runs[0].tool.driver.name, "ghss");
+}
+
+#[test]
+fn format_sarif_emits_two_rules_in_driver() {
+    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rules = parsed["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2);
+    let ids: Vec<&str> = rules.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"ghss/vulnerable-action"));
+    assert!(ids.contains(&"ghss/vulnerable-dependency"));
+}
+
+#[test]
+fn format_sarif_artifact_location_uses_supplied_path() {
+    let stdout = stdout_of(&["--file", &fixture("vulnerable-workflow.yml"), "--format", "sarif"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = parsed["runs"][0]["results"].as_array().unwrap();
+    if !results.is_empty() {
+        let uri = results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+            .as_str()
+            .unwrap();
+        // The CLI passes --file through verbatim; the absolute fixture path is intentional.
+        assert!(uri.ends_with("vulnerable-workflow.yml"));
+    }
+}
+
+#[test]
+fn json_flag_alias_still_produces_json_output() {
+    // Back-compat: --json without --format should still work.
+    let stdout = stdout_of(&["--file", &fixture("sample-workflow.yml"), "--json"]);
+    let _: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--json must continue to emit JSON");
+}
+
+#[test]
+fn format_and_json_flag_together_exits_with_error() {
+    let output = run_ghss(&[
+        "--file",
+        &fixture("sample-workflow.yml"),
+        "--format",
+        "sarif",
+        "--json",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("cannot be used") || stderr.contains("conflicts"),
+        "expected conflict error, got: {stderr}"
+    );
+}
