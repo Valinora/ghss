@@ -7,9 +7,10 @@ use cron::Schedule;
 use ghss::github::GitHubClient;
 use ghss::output::AuditNode;
 
-use crate::config::{ScannerConfig, normalize_cron};
-use crate::scan;
+use crate::config::{RepoEntry, ScannerConfig, normalize_cron};
+use crate::scan::{self, RepoScanOutput};
 use crate::storage::{ScanStatus, Storage, detect_drift};
+use crate::upload;
 
 #[derive(Debug)]
 pub struct Scheduler {
@@ -123,33 +124,47 @@ async fn execute_cycle(
     } else {
         ScanStatus::Partial
     };
-    persist_results(storage, &scan_result.results, cycle, status).await
+    persist_results(storage, client, config, &scan_result.results, cycle, status).await
 }
 
 /// Persist scan results for all repos, detecting drift against previous findings.
 async fn persist_results(
     storage: &Storage,
-    results: &[(String, Vec<AuditNode>)],
+    client: &GitHubClient,
+    config: &ScannerConfig,
+    results: &[RepoScanOutput],
     cycle: u64,
     status: ScanStatus,
 ) -> anyhow::Result<()> {
-    for (repo_id, nodes) in results {
-        persist_repo_result(storage, repo_id, nodes, cycle, status).await?;
+    for output in results {
+        let repo_entry = config
+            .repos
+            .iter()
+            .find(|r| format!("{}/{}", r.owner, r.name) == output.repo_id);
+        persist_repo_result(storage, client, config, repo_entry, output, cycle, status).await?;
     }
     Ok(())
 }
 
-/// Persist scan results for a single repo, detecting drift against previous findings.
+/// Persist scan results for a single repo, detecting drift against
+/// previous findings, then (when configured) uploading SARIF to Code
+/// Scanning.
 async fn persist_repo_result(
     storage: &Storage,
-    repo_id: &str,
-    nodes: &[AuditNode],
+    client: &GitHubClient,
+    config: &ScannerConfig,
+    repo_entry: Option<&RepoEntry>,
+    output: &RepoScanOutput,
     cycle: u64,
     status: ScanStatus,
 ) -> anyhow::Result<()> {
-    let (owner, name) = repo_id.split_once('/').unwrap_or((repo_id, "unknown"));
+    let repo_id = output.repo_id.as_str();
+    let (owner, name) = repo_id
+        .split_once('/')
+        .with_context(|| format!("malformed repo_id: {repo_id}"))?;
 
     let started_at = Utc::now().to_rfc3339();
+    let nodes = &output.nodes;
 
     // Get previous findings for drift detection
     let previous = storage.get_latest_findings(owner, name).await?;
@@ -203,6 +218,26 @@ async fn persist_repo_result(
         drift_count,
         repo_id
     );
+
+    // SARIF upload (after drift is recorded). Errors here never fail
+    // the scan cycle.
+    if let (Some(upload_cfg), Some(repo)) = (config.upload.as_ref(), repo_entry)
+        && upload_cfg.enabled_for(repo)
+    {
+        match upload::upload_repo_sarif(client, storage, upload_cfg, run_id, output).await {
+            Ok(o) => tracing::info!(
+                repo = %repo_id,
+                sarif_id = ?o.sarif_id,
+                status = ?o.status,
+                "SARIF upload result"
+            ),
+            Err(e) => tracing::warn!(
+                repo = %repo_id,
+                error = %e,
+                "SARIF upload errored (cycle continues)"
+            ),
+        }
+    }
 
     Ok(())
 }

@@ -43,6 +43,26 @@ url = "sqlite://{db_path}"
 async fn setup_scan_mock_server() -> MockServer {
     let server = MockServer::start().await;
 
+    // Repo metadata + HEAD-SHA resolution.
+    Mock::given(method("GET"))
+        .and(path("/repos/test-org/test-repo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "default_branch": "main"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/test-org/test-repo/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/heads/main",
+            "object": {
+                "type": "commit",
+                "sha": "cafe0001cafe0001cafe0001cafe0001cafe0001"
+            }
+        })))
+        .mount(&server)
+        .await;
+
     // Contents API: list workflow files for test-org/test-repo
     Mock::given(method("GET"))
         .and(path("/repos/test-org/test-repo/contents/.github/workflows"))
@@ -54,10 +74,10 @@ async fn setup_scan_mock_server() -> MockServer {
         .mount(&server)
         .await;
 
-    // Raw content: ci.yml
+    // Raw content: ci.yml (served at the resolved commit SHA)
     Mock::given(method("GET"))
         .and(path(
-            "/test-org/test-repo/HEAD/.github/workflows/ci.yml",
+            "/test-org/test-repo/cafe0001cafe0001cafe0001cafe0001cafe0001/.github/workflows/ci.yml",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v3\n",
@@ -68,7 +88,7 @@ async fn setup_scan_mock_server() -> MockServer {
     // Raw content: deploy.yml (has one overlapping action + one unique)
     Mock::given(method("GET"))
         .and(path(
-            "/test-org/test-repo/HEAD/.github/workflows/deploy.yml",
+            "/test-org/test-repo/cafe0001cafe0001cafe0001cafe0001cafe0001/.github/workflows/deploy.yml",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             "name: Deploy\non:\n  push:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: aws-actions/configure-aws-credentials@v4\n",
@@ -326,6 +346,21 @@ async fn partial_failure_persists_successful_repo_and_marks_partial() {
 
     // good-org/good-repo: full mock setup
     Mock::given(method("GET"))
+        .and(path("/repos/good-org/good-repo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "default_branch": "main"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/good-org/good-repo/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/heads/main",
+            "object": {"type": "commit", "sha": "cafe0002cafe0002cafe0002cafe0002cafe0002"}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/repos/good-org/good-repo/contents/.github/workflows"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {"name": "ci.yml", "type": "file"}
@@ -334,7 +369,9 @@ async fn partial_failure_persists_successful_repo_and_marks_partial() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/good-org/good-repo/HEAD/.github/workflows/ci.yml"))
+        .and(path(
+            "/good-org/good-repo/cafe0002cafe0002cafe0002cafe0002cafe0002/.github/workflows/ci.yml",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
         ))
@@ -362,9 +399,9 @@ async fn partial_failure_persists_successful_repo_and_marks_partial() {
         .mount(&server)
         .await;
 
-    // bad-org/bad-repo: Contents API returns 404
+    // bad-org/bad-repo: repo metadata returns 404 (scan_repo's first call)
     Mock::given(method("GET"))
-        .and(path("/repos/bad-org/bad-repo/contents/.github/workflows"))
+        .and(path("/repos/bad-org/bad-repo"))
         .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
             "message": "Not Found"
         })))

@@ -19,7 +19,35 @@ const RULE_VULNERABLE_ACTION: &str = "ghss/vulnerable-action";
 const RULE_VULNERABLE_DEPENDENCY: &str = "ghss/vulnerable-dependency";
 
 const SARIF_SCHEMA_URL: &str = "https://json.schemastore.org/sarif-2.1.0.json";
-const TOOL_INFORMATION_URI: &str = "https://github.com/Valinora/ghss";
+pub const TOOL_INFORMATION_URI: &str = "https://github.com/Valinora/ghss";
+
+/// Tool identity and homepage metadata advertised in the SARIF driver.
+/// Operators (e.g. the scanner with a configured `[upload]` section)
+/// can substitute custom values without forking the library.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolMetadata<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    pub information_uri: &'a str,
+}
+
+impl ToolMetadata<'static> {
+    /// Default identity: `ghss`, the crate version, and the canonical
+    /// project URL.
+    pub const fn default_const() -> Self {
+        Self {
+            name: "ghss",
+            version: env!("CARGO_PKG_VERSION"),
+            information_uri: TOOL_INFORMATION_URI,
+        }
+    }
+}
+
+impl Default for ToolMetadata<'static> {
+    fn default() -> Self {
+        Self::default_const()
+    }
+}
 
 pub struct SarifOutput {
     pub workflow_path: PathBuf,
@@ -48,24 +76,56 @@ impl OutputFormatter for SarifOutput {
     }
 }
 
+/// Single-workflow convenience wrapper used by the CLI. Treats `nodes` as
+/// the audit set for a single workflow file. Prefer
+/// `build_repo_sarif_log` when emitting findings across multiple
+/// workflows in one repo.
 pub fn build_sarif_log(nodes: &[AuditNode], workflow_path: &Path, tool_version: &str) -> Sarif {
-    let workflow_uri = workflow_path.to_string_lossy().into_owned();
+    let actions: Vec<ActionRef> = nodes.iter().map(|n| n.entry.action.clone()).collect();
+    let attribution = vec![(workflow_path.to_path_buf(), actions)];
+    let tool = ToolMetadata {
+        version: tool_version,
+        ..ToolMetadata::default_const()
+    };
+    build_repo_sarif_log(nodes, &attribution, &tool)
+}
+
+/// Build a SARIF log spanning multiple workflow files in one repo.
+///
+/// `nodes` is the deduplicated set of audit nodes for the repo (one per
+/// unique top-level action ref). `attribution` is metadata mapping each
+/// workflow file path to the action refs that workflow contains; the
+/// builder indexes `nodes` by `entry.action` and emits one set of
+/// results per attribution entry. Children of a node inherit the
+/// parent's workflow path.
+pub fn build_repo_sarif_log(
+    nodes: &[AuditNode],
+    attribution: &[(PathBuf, Vec<ActionRef>)],
+    tool: &ToolMetadata<'_>,
+) -> Sarif {
+    let index: BTreeMap<&ActionRef, &AuditNode> =
+        nodes.iter().map(|n| (&n.entry.action, n)).collect();
 
     let mut results = Vec::new();
-    for node in nodes {
-        collect_results(node, &workflow_uri, &mut results, &[]);
+    for (path, actions) in attribution {
+        let workflow_uri = path.to_string_lossy().into_owned();
+        for action in actions {
+            if let Some(node) = index.get(action) {
+                collect_results(node, &workflow_uri, &mut results, &[]);
+            }
+        }
     }
 
     let driver = ToolComponent::builder()
-        .name("ghss")
-        .semantic_version(tool_version.to_string())
-        .information_uri(TOOL_INFORMATION_URI.to_string())
+        .name(tool.name.to_string())
+        .semantic_version(tool.version.to_string())
+        .information_uri(tool.information_uri.to_string())
         .rules(rules())
         .build();
 
-    let tool = Tool::builder().driver(driver).build();
+    let sarif_tool = Tool::builder().driver(driver).build();
 
-    let run = Run::builder().tool(tool).results(results).build();
+    let run = Run::builder().tool(sarif_tool).results(results).build();
 
     Sarif::builder()
         .schema(SARIF_SCHEMA_URL.to_string())
@@ -546,6 +606,111 @@ mod tests {
         let msg = results[0]["message"]["text"].as_str().unwrap();
         assert!(msg.contains("actions/setup-node@v1"));
         assert!(msg.contains("via actions/checkout@v1"));
+    }
+
+    #[test]
+    fn build_repo_sarif_log_indexes_nodes_by_action_ref() {
+        // One deduplicated audit node, referenced by two workflows.
+        let action: ActionRef = "actions/checkout@v1".parse().unwrap();
+        let nodes = vec![leaf_with_advisories(
+            "actions/checkout@v1",
+            vec![advisory("GHSA-shared", "high")],
+        )];
+
+        let attribution = vec![
+            (
+                PathBuf::from(".github/workflows/ci.yml"),
+                vec![action.clone()],
+            ),
+            (
+                PathBuf::from(".github/workflows/deploy.yml"),
+                vec![action.clone()],
+            ),
+        ];
+
+        let tool = ToolMetadata {
+            version: "test",
+            ..ToolMetadata::default_const()
+        };
+        let sarif = build_repo_sarif_log(&nodes, &attribution, &tool);
+        let json = serde_json::to_value(&sarif).unwrap();
+
+        let results = json["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(
+            results.len(),
+            2,
+            "one result per (workflow × advisory) — single dedup'd node referenced twice"
+        );
+
+        let uris: Vec<&str> = results
+            .iter()
+            .map(|r| {
+                r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        assert!(uris.contains(&".github/workflows/ci.yml"));
+        assert!(uris.contains(&".github/workflows/deploy.yml"));
+
+        let fps: Vec<&str> = results
+            .iter()
+            .map(|r| {
+                r["partialFingerprints"]["primaryLocationLineHash"]
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        assert_ne!(
+            fps[0], fps[1],
+            "same advisory in different workflows must produce distinct fingerprints"
+        );
+    }
+
+    #[test]
+    fn build_repo_sarif_log_uses_tool_metadata() {
+        let nodes = vec![leaf_with_advisories(
+            "actions/checkout@v1",
+            vec![advisory("GHSA-x", "high")],
+        )];
+        let action: ActionRef = "actions/checkout@v1".parse().unwrap();
+        let attribution = vec![(PathBuf::from("ci.yml"), vec![action])];
+
+        let tool = ToolMetadata {
+            name: "acme-scanner",
+            version: "9.9.9",
+            information_uri: "https://example.com/acme",
+        };
+        let sarif = build_repo_sarif_log(&nodes, &attribution, &tool);
+        let json = serde_json::to_value(&sarif).unwrap();
+        let driver = &json["runs"][0]["tool"]["driver"];
+        assert_eq!(driver["name"], "acme-scanner");
+        assert_eq!(driver["semanticVersion"], "9.9.9");
+        assert_eq!(driver["informationUri"], "https://example.com/acme");
+    }
+
+    #[test]
+    fn build_repo_sarif_log_skips_attribution_entries_with_unknown_actions() {
+        // Defensive: if attribution references an action not present in
+        // nodes (shouldn't happen in normal flow), skip silently rather
+        // than panic.
+        let nodes: Vec<AuditNode> = vec![];
+        let bogus: ActionRef = "actions/checkout@v1".parse().unwrap();
+        let attribution = vec![(PathBuf::from("ci.yml"), vec![bogus])];
+        let tool = ToolMetadata::default_const();
+        let sarif = build_repo_sarif_log(&nodes, &attribution, &tool);
+        let json = serde_json::to_value(&sarif).unwrap();
+        let results = json["runs"][0]["results"].as_array().unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn build_repo_sarif_log_empty_input_produces_zero_results() {
+        let tool = ToolMetadata::default_const();
+        let sarif = build_repo_sarif_log(&[], &[], &tool);
+        let json = serde_json::to_value(&sarif).unwrap();
+        let results = json["runs"][0]["results"].as_array().unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

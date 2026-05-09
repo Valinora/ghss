@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
+pub use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::instrument;
@@ -13,6 +14,86 @@ const RAW_CONTENT_BASE: &str = "https://raw.githubusercontent.com";
 
 /// Token refresh buffer — mint a new token when the cached one expires within this window.
 const TOKEN_REFRESH_BUFFER_SECS: i64 = 5 * 60;
+
+/// Maximum bytes of an upstream response body we'll preserve in error
+/// diagnostics. Larger bodies are truncated before being logged or
+/// returned to callers to avoid log/disk spam from misbehaving servers.
+pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
+
+/// Typed error returned by the REST helpers (`api_get_optional`,
+/// `api_post_json`) when the upstream returns a non-2xx status.
+/// Callers can downcast via `anyhow::Error::downcast_ref::<GitHubApiError>`
+/// to branch on the actual `StatusCode` rather than parsing the
+/// formatted error string.
+#[derive(Debug)]
+pub struct GitHubApiError {
+    pub status: StatusCode,
+    pub url: String,
+    /// Already truncated to `MAX_DIAGNOSTIC_BYTES` and stripped of
+    /// non-printable control characters (except `\n`/`\t`).
+    pub body: String,
+}
+
+impl GitHubApiError {
+    pub fn from_response(url: &str, status: StatusCode, raw_body: String) -> Self {
+        Self {
+            url: url.to_string(),
+            status,
+            body: truncate_for_diagnostic(&raw_body, MAX_DIAGNOSTIC_BYTES),
+        }
+    }
+}
+
+impl std::fmt::Display for GitHubApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.body.is_empty() {
+            write!(f, "{} returned {}", self.url, self.status)
+        } else {
+            write!(f, "{} returned {}: {}", self.url, self.status, self.body)
+        }
+    }
+}
+
+impl std::error::Error for GitHubApiError {}
+
+/// Strip non-printable control characters (except `\n` and `\t`), then
+/// truncate the result to `max_bytes`. Operates on UTF-8 char boundaries
+/// so we never produce invalid UTF-8.
+pub fn truncate_for_diagnostic(s: &str, max_bytes: usize) -> String {
+    let mut out: String = s
+        .chars()
+        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
+        .collect();
+    if out.len() > max_bytes {
+        // Find the largest char boundary <= max_bytes.
+        let mut cut = max_bytes;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push_str("…[truncated]");
+    }
+    out
+}
+
+/// Validate that an API/raw base URL uses HTTPS, or HTTP only against
+/// the loopback host. Bearer tokens flow over both surfaces; cleartext
+/// HTTP to a remote host would leak credentials.
+pub fn validate_base_url(env_name: &str, url: &str) -> Result<()> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    if url.starts_with("http://localhost")
+        || url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://[::1]")
+    {
+        tracing::warn!(
+            "{env_name}={url} uses cleartext HTTP — only safe for local testing"
+        );
+        return Ok(());
+    }
+    bail!("{env_name}={url} must use https://");
+}
 
 struct AppCredentials {
     app_id: u64,
@@ -54,6 +135,12 @@ fn resolve_base_urls() -> (String, String) {
         std::env::var("GHSS_API_BASE_URL").unwrap_or_else(|_| GITHUB_API_BASE.to_string());
     let raw_base_url =
         std::env::var("GHSS_RAW_BASE_URL").unwrap_or_else(|_| RAW_CONTENT_BASE.to_string());
+    // Fail-fast on cleartext HTTP to a remote host. Bearer tokens flow
+    // over both surfaces under App auth.
+    validate_base_url("GHSS_API_BASE_URL", &api_base_url)
+        .expect("invalid GHSS_API_BASE_URL configuration");
+    validate_base_url("GHSS_RAW_BASE_URL", &raw_base_url)
+        .expect("invalid GHSS_RAW_BASE_URL configuration");
     (api_base_url, raw_base_url)
 }
 
@@ -279,13 +366,17 @@ impl GitHubClient {
             .await
             .with_context(|| format!("request to {url} failed"))?;
 
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
             return Ok(None);
         }
 
-        let response = response
-            .error_for_status()
-            .with_context(|| format!("{url} returned non-success status"))?;
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::Error::new(GitHubApiError::from_response(
+                url, status, body,
+            )));
+        }
 
         let json = response
             .json()
@@ -390,6 +481,48 @@ impl GitHubClient {
         json.get("data")
             .cloned()
             .context("missing 'data' field in GraphQL response")
+    }
+
+    /// POST a JSON body to a GitHub REST endpoint and parse the response as JSON.
+    /// Requires authentication.
+    #[instrument(skip(self, body))]
+    pub async fn api_post_json(&self, url: &str, body: Value) -> Result<Value> {
+        let token = self
+            .get_token()
+            .await?
+            .context("GitHub token is required for POST")?;
+
+        let response = self
+            .client
+            .post(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url} failed"))?;
+
+        let status = response.status();
+        let response_body = response
+            .text()
+            .await
+            .with_context(|| format!("failed to read body from {url}"))?;
+
+        if !status.is_success() {
+            return Err(anyhow::Error::new(GitHubApiError::from_response(
+                url,
+                status,
+                response_body,
+            )));
+        }
+
+        if response_body.is_empty() {
+            return Ok(Value::Null);
+        }
+
+        serde_json::from_str(&response_body)
+            .with_context(|| format!("failed to parse JSON from {url}"))
     }
 }
 
@@ -672,6 +805,192 @@ mod tests {
             ))
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn api_post_json_success_path() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/code-scanning/sarifs"))
+            .and(header("authorization", "Bearer pat"))
+            .and(header("x-github-api-version", "2022-11-28"))
+            .and(body_json(json!({"hello": "world"})))
+            .respond_with(
+                ResponseTemplate::new(202).set_body_json(json!({"id": "abc-123"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::new(Some("pat".to_string()));
+        let url = format!("{}/repos/o/r/code-scanning/sarifs", mock_server.uri());
+        let resp = client
+            .api_post_json(&url, json!({"hello": "world"}))
+            .await
+            .unwrap();
+        assert_eq!(resp["id"], "abc-123");
+    }
+
+    #[tokio::test]
+    async fn api_post_json_returns_typed_error_on_4xx() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sarifs"))
+            .respond_with(
+                ResponseTemplate::new(422)
+                    .set_body_string("{\"message\":\"sarif schema invalid\"}"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::new(Some("pat".to_string()));
+        let url = format!("{}/sarifs", mock_server.uri());
+        let err = client
+            .api_post_json(&url, json!({}))
+            .await
+            .unwrap_err();
+        let api_err = err
+            .downcast_ref::<GitHubApiError>()
+            .expect("expected typed GitHubApiError");
+        assert_eq!(api_err.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(api_err.url, url);
+        assert!(
+            api_err.body.contains("sarif schema invalid"),
+            "expected response body to be carried: {body}",
+            body = api_err.body
+        );
+    }
+
+    #[tokio::test]
+    async fn api_post_json_returns_typed_error_on_5xx() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/blip"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream down"))
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::new(Some("pat".to_string()));
+        let url = format!("{}/blip", mock_server.uri());
+        let err = client.api_post_json(&url, json!({})).await.unwrap_err();
+        let api_err = err
+            .downcast_ref::<GitHubApiError>()
+            .expect("expected typed GitHubApiError");
+        assert_eq!(api_err.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(api_err.status.is_server_error());
+        assert!(!api_err.status.is_client_error());
+    }
+
+    #[tokio::test]
+    async fn api_post_json_truncates_huge_response_bodies() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // Build a 64 KiB body of printable ASCII — larger than the
+        // 8 KiB diagnostic cap.
+        let huge: String = "X".repeat(64 * 1024);
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/spew"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(huge))
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::new(Some("pat".to_string()));
+        let url = format!("{}/spew", mock_server.uri());
+        let err = client.api_post_json(&url, json!({})).await.unwrap_err();
+        let api_err = err.downcast_ref::<GitHubApiError>().unwrap();
+        assert!(
+            api_err.body.len() <= MAX_DIAGNOSTIC_BYTES + "…[truncated]".len(),
+            "body should be truncated to ~8 KiB, got {}",
+            api_err.body.len()
+        );
+        assert!(api_err.body.ends_with("…[truncated]"));
+    }
+
+    #[tokio::test]
+    async fn api_post_json_strips_control_chars_from_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // Response containing ANSI escape + bell + null
+        let nasty = "hello\x1b[31mRED\x07\x00world";
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/nasty"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(nasty))
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::new(Some("pat".to_string()));
+        let url = format!("{}/nasty", mock_server.uri());
+        let err = client.api_post_json(&url, json!({})).await.unwrap_err();
+        let api_err = err.downcast_ref::<GitHubApiError>().unwrap();
+        assert!(!api_err.body.contains('\x1b'));
+        assert!(!api_err.body.contains('\x07'));
+        assert!(!api_err.body.contains('\x00'));
+        assert!(api_err.body.contains("hello"));
+        assert!(api_err.body.contains("world"));
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_strips_control_chars_and_caps_length() {
+        let s = "ok\nstill ok\ttab\x07bell\x1b[31mred\x00null";
+        let out = truncate_for_diagnostic(s, 1024);
+        assert!(out.contains('\n'));
+        assert!(out.contains('\t'));
+        assert!(!out.contains('\x07'));
+        assert!(!out.contains('\x1b'));
+        assert!(!out.contains('\x00'));
+
+        let huge = "z".repeat(20_000);
+        let out = truncate_for_diagnostic(&huge, 8192);
+        assert!(out.len() <= 8192 + "…[truncated]".len());
+        assert!(out.ends_with("…[truncated]"));
+    }
+
+    #[test]
+    fn validate_base_url_accepts_https() {
+        assert!(validate_base_url("X", "https://api.github.com").is_ok());
+        assert!(validate_base_url("X", "https://ghe.example.com").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_accepts_http_to_loopback() {
+        assert!(validate_base_url("X", "http://localhost:8080").is_ok());
+        assert!(validate_base_url("X", "http://127.0.0.1:9000").is_ok());
+        assert!(validate_base_url("X", "http://[::1]:1234").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_http_to_remote() {
+        let err = validate_base_url("GHSS_API_BASE_URL", "http://malicious.example.com")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must use https://"), "got: {err}");
+        assert!(err.contains("GHSS_API_BASE_URL"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn api_post_json_requires_token() {
+        let client = GitHubClient::new(None);
+        let err = client
+            .api_post_json("http://example.invalid/", json!({}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("token is required"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

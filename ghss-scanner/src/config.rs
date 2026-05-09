@@ -12,6 +12,7 @@ pub struct ScannerConfig {
     pub storage: StorageSection,
     pub telemetry: Option<TelemetrySection>,
     pub health: Option<HealthSection>,
+    pub upload: Option<UploadSection>,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +65,11 @@ pub struct RepoEntry {
     pub owner: String,
     pub name: String,
     pub workflows: Option<Vec<String>>,
+    /// Per-repo override for SARIF upload. `None` falls through to
+    /// `[upload].enabled`. `Some(false)` opts out even when the global
+    /// flag is on (e.g. private repos without GHAS).
+    #[serde(default)]
+    pub upload_sarif: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +98,57 @@ pub struct TelemetrySection {
 #[serde(deny_unknown_fields)]
 pub struct HealthSection {
     pub bind: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UploadSection {
+    /// Master switch. Even if this section is present, no uploads happen
+    /// unless `enabled = true`.
+    pub enabled: bool,
+    /// Tool name advertised in the SARIF driver. Surfaces in the GHAS
+    /// "tool" filter on the Security tab.
+    #[serde(default = "default_tool_name")]
+    pub tool_name: String,
+    /// When true, suppress uploads whose payload hash matches the most
+    /// recent successful upload for that repo. Default true.
+    #[serde(default = "default_skip_unchanged")]
+    pub skip_unchanged: bool,
+    /// Override the SARIF tool's `informationUri`. Defaults to the
+    /// canonical project URL when unset.
+    #[serde(default)]
+    pub information_uri: Option<String>,
+}
+
+fn default_tool_name() -> String {
+    "ghss".to_string()
+}
+
+fn default_skip_unchanged() -> bool {
+    true
+}
+
+impl UploadSection {
+    /// Two-layer opt-in: global `enabled = true` AND per-repo
+    /// `upload_sarif != Some(false)`.
+    pub fn enabled_for(&self, repo: &RepoEntry) -> bool {
+        self.enabled && !matches!(repo.upload_sarif, Some(false))
+    }
+
+    /// Build the `ToolMetadata` the SARIF library expects. Pulls the
+    /// tool name from this section and falls back to the library's
+    /// `TOOL_INFORMATION_URI` constant when the operator hasn't
+    /// configured an override.
+    pub fn tool_metadata(&self) -> ghss::output::sarif::ToolMetadata<'_> {
+        ghss::output::sarif::ToolMetadata {
+            name: &self.tool_name,
+            version: env!("CARGO_PKG_VERSION"),
+            information_uri: self
+                .information_uri
+                .as_deref()
+                .unwrap_or(ghss::output::sarif::TOOL_INFORMATION_URI),
+        }
+    }
 }
 
 impl ScannerConfig {
@@ -705,6 +762,204 @@ url = "sqlite:///tmp/ghss.db"
             msg.contains("missing field") || msg.contains("installation_id"),
             "expected missing field error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn test_upload_section_absent_means_no_uploads() {
+        let f = write_temp_config(VALID_CONFIG);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        assert!(config.upload.is_none());
+    }
+
+    #[test]
+    fn test_upload_section_enabled_with_defaults() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = true
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.expect("[upload] should be present");
+        assert!(upload.enabled);
+        assert_eq!(upload.tool_name, "ghss");
+        assert!(upload.skip_unchanged);
+    }
+
+    #[test]
+    fn test_upload_section_overrides() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = true
+tool_name = "ghss-internal"
+skip_unchanged = false
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.unwrap();
+        assert_eq!(upload.tool_name, "ghss-internal");
+        assert!(!upload.skip_unchanged);
+    }
+
+    #[test]
+    fn test_upload_per_repo_override() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo-a"
+
+[[repos]]
+owner = "org"
+name = "repo-b"
+upload_sarif = false
+
+[[repos]]
+owner = "org"
+name = "repo-c"
+upload_sarif = true
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = true
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.as_ref().unwrap();
+        assert!(upload.enabled_for(&config.repos[0]));
+        assert!(!upload.enabled_for(&config.repos[1]));
+        assert!(upload.enabled_for(&config.repos[2]));
+    }
+
+    #[test]
+    fn test_upload_global_disabled_disables_all() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+upload_sarif = true
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = false
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.as_ref().unwrap();
+        assert!(
+            !upload.enabled_for(&config.repos[0]),
+            "global enabled=false must override per-repo opt-in"
+        );
+    }
+
+    #[test]
+    fn test_tool_metadata_uses_default_when_information_uri_unset() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = true
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.as_ref().unwrap();
+        let tool = upload.tool_metadata();
+        assert_eq!(tool.name, "ghss");
+        assert_eq!(tool.information_uri, ghss::output::sarif::TOOL_INFORMATION_URI);
+        // Version is the crate's CARGO_PKG_VERSION; just sanity-check it's non-empty.
+        assert!(!tool.version.is_empty());
+    }
+
+    #[test]
+    fn test_tool_metadata_uses_override_when_information_uri_set() {
+        let content = r#"
+[scanner]
+schedule = "0 * * * *"
+
+[[repos]]
+owner = "org"
+name = "repo"
+
+[pipeline]
+depth = "0"
+provider = "all"
+deps = false
+
+[storage]
+url = "sqlite:///tmp/ghss.db"
+
+[upload]
+enabled = true
+tool_name = "acme-scanner"
+information_uri = "https://example.com/acme"
+"#;
+        let f = write_temp_config(content);
+        let config = ScannerConfig::from_file(f.path()).unwrap();
+        let upload = config.upload.as_ref().unwrap();
+        let tool = upload.tool_metadata();
+        assert_eq!(tool.name, "acme-scanner");
+        assert_eq!(tool.information_uri, "https://example.com/acme");
     }
 
     #[test]

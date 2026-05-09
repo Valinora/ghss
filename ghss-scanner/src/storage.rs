@@ -167,6 +167,67 @@ impl Storage {
         Ok(row.get::<i64, _>("id"))
     }
 
+    /// Record a SARIF upload attempt. `sarif_id` is `None` when the upload
+    /// was skipped or failed before GitHub returned a 202.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_sarif_upload(
+        &self,
+        scan_run_id: i64,
+        repo_owner: &str,
+        repo_name: &str,
+        sarif_id: Option<&str>,
+        sarif_sha256: &str,
+        commit_sha: &str,
+        ref_name: &str,
+        status: &str,
+        response_body: Option<&str>,
+        uploaded_at: &str,
+    ) -> anyhow::Result<i64> {
+        let row = sqlx::query(
+            "INSERT INTO sarif_uploads
+             (scan_run_id, repo_owner, repo_name, sarif_id, sarif_sha256,
+              commit_sha, ref, status, response_body, uploaded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING id",
+        )
+        .bind(scan_run_id)
+        .bind(repo_owner)
+        .bind(repo_name)
+        .bind(sarif_id)
+        .bind(sarif_sha256)
+        .bind(commit_sha)
+        .bind(ref_name)
+        .bind(status)
+        .bind(response_body)
+        .bind(uploaded_at)
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to insert sarif_upload")?;
+
+        Ok(row.get::<i64, _>("id"))
+    }
+
+    /// SHA-256 of the most recent successfully accepted SARIF upload for
+    /// the given repo, if any.
+    pub async fn last_successful_sarif_sha(
+        &self,
+        repo_owner: &str,
+        repo_name: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT sarif_sha256 FROM sarif_uploads
+             WHERE repo_owner = ? AND repo_name = ? AND status = 'accepted'
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(repo_owner)
+        .bind(repo_name)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to query last_successful_sarif_sha")?;
+
+        Ok(row.map(|(sha,)| sha))
+    }
+
     /// Get the findings from the most recent scan run for a given repo.
     pub async fn get_latest_findings(
         &self,
@@ -422,6 +483,110 @@ mod tests {
         }];
         let drift = detect_drift(&previous, &current);
         assert!(drift.is_empty());
+    }
+
+    #[tokio::test]
+    async fn insert_and_query_sarif_upload() {
+        let storage = test_storage().await;
+        let run_id = storage
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
+            .await
+            .unwrap();
+
+        let id = storage
+            .insert_sarif_upload(
+                run_id,
+                "org",
+                "repo",
+                Some("sarif-abc"),
+                "deadbeef",
+                "commit-sha",
+                "refs/heads/main",
+                "accepted",
+                None,
+                "2024-01-01T00:00:01Z",
+            )
+            .await
+            .unwrap();
+        assert_eq!(id, 1);
+
+        let sha = storage
+            .last_successful_sarif_sha("org", "repo")
+            .await
+            .unwrap();
+        assert_eq!(sha.as_deref(), Some("deadbeef"));
+    }
+
+    #[tokio::test]
+    async fn last_successful_sarif_sha_skips_failed_rows() {
+        let storage = test_storage().await;
+        let run_id = storage
+            .insert_scan_run(
+                "org",
+                "repo",
+                "2024-01-01T00:00:00Z",
+                None,
+                1,
+                ScanStatus::Completed,
+            )
+            .await
+            .unwrap();
+
+        // Older accepted, then a newer failed → last_successful should
+        // still return the older accepted hash.
+        storage
+            .insert_sarif_upload(
+                run_id,
+                "org",
+                "repo",
+                Some("ok-id"),
+                "hash-old",
+                "sha1",
+                "refs/heads/main",
+                "accepted",
+                None,
+                "2024-01-01T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_sarif_upload(
+                run_id,
+                "org",
+                "repo",
+                None,
+                "hash-new",
+                "sha2",
+                "refs/heads/main",
+                "failed",
+                Some("network down"),
+                "2024-01-01T00:01:00Z",
+            )
+            .await
+            .unwrap();
+
+        let sha = storage
+            .last_successful_sarif_sha("org", "repo")
+            .await
+            .unwrap();
+        assert_eq!(sha.as_deref(), Some("hash-old"));
+    }
+
+    #[tokio::test]
+    async fn last_successful_sarif_sha_none_when_no_accepted() {
+        let storage = test_storage().await;
+        let sha = storage
+            .last_successful_sarif_sha("org", "repo")
+            .await
+            .unwrap();
+        assert!(sha.is_none());
     }
 
     #[tokio::test]

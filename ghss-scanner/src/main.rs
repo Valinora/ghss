@@ -4,6 +4,7 @@ mod config;
 mod scan;
 mod scheduler;
 mod storage;
+mod upload;
 
 use std::path::PathBuf;
 

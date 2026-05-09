@@ -9,17 +9,22 @@ repository = "https://github.com/Valinora/ghss"
 [dependencies]
 anyhow.workspace = true
 axum = "0.8.8"
+base64.workspace = true
 chrono = "0.4.44"
 clap.workspace = true
 clap-verbosity-flag.workspace = true
 cron = "0.16.0"
+flate2.workspace = true
 futures.workspace = true
 ghss = { version = "0.2.0", path = "../ghss" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 opentelemetry = "0.31.0"
+percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde-sarif.workspace = true
+sha2.workspace = true
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "migrate"] }
 tokio = { workspace = true, features = ["signal"] }
 toml = "1.0.3"

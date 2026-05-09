@@ -46,9 +46,32 @@ url = "sqlite://{db_path}"
 async fn setup_mock_server() -> MockServer {
     let server = MockServer::start().await;
 
-    // Raw content: ci.yml workflow
+    // Repo metadata for default-branch + HEAD-SHA resolution.
     Mock::given(method("GET"))
-        .and(path("/my-org/my-app/HEAD/.github/workflows/ci.yml"))
+        .and(path("/repos/my-org/my-app"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "default_branch": "main"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/my-org/my-app/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ref": "refs/heads/main",
+            "object": {
+                "type": "commit",
+                "sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // Raw content: ci.yml workflow, served at the resolved commit SHA.
+    Mock::given(method("GET"))
+        .and(path(
+            "/my-org/my-app/deadbeefdeadbeefdeadbeefdeadbeefdeadbeef/.github/workflows/ci.yml",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_string(
             "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v3\n",
         ))

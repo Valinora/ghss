@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -15,14 +16,46 @@ use ghss::stages::{
     WorkflowExpandStage,
 };
 use ghss::walker::Walker;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use crate::config::{PipelineSection, RepoEntry};
 
-type RepoOutcome = Result<(String, Vec<AuditNode>), (String, anyhow::Error)>;
+/// Path-segment percent-encoding set: preserves `/` (so multi-segment
+/// branches like `release/1.0` stay readable) but encodes characters
+/// that would break URL parsing (`?`, `#`, `%`, space, control chars).
+const REF_PATH: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'?')
+    .add(b'#')
+    .add(b'%')
+    .add(b'+');
+
+/// Per-repo scan output. Carries enough context for both finding
+/// persistence and SARIF upload.
+///
+/// The audit set is stored once (`nodes`), with `attribution` mapping
+/// each workflow file to the action refs it contains. Downstream
+/// consumers iterate `nodes` for repo-level work and walk
+/// `attribution + nodes` together for per-workflow SARIF emission.
+pub struct RepoScanOutput {
+    pub repo_id: String,
+    /// Deduplicated audit nodes from one Walker run — one entry per
+    /// unique top-level `ActionRef` across all workflows in this repo.
+    pub nodes: Vec<AuditNode>,
+    /// Workflow path → action refs that workflow contained at parse
+    /// time. Action refs are looked up in `nodes` by the SARIF builder.
+    pub attribution: Vec<(PathBuf, Vec<ActionRef>)>,
+    /// Commit SHA of the default branch HEAD at the moment scanning started.
+    pub commit_sha: String,
+    /// Full ref name, e.g. `refs/heads/main`.
+    pub ref_name: String,
+}
+
+type RepoOutcome = Result<RepoScanOutput, (String, anyhow::Error)>;
 
 /// Result of a scan cycle, including findings and error tracking.
 pub struct ScanCycleResult {
-    pub results: Vec<(String, Vec<AuditNode>)>,
+    pub results: Vec<RepoScanOutput>,
     pub failures: Vec<(String, anyhow::Error)>,
 }
 
@@ -80,16 +113,16 @@ pub async fn run_scan_cycle(
 
     let repos_succeeded = results.len();
     let total_errors = failures.len();
-    let total_findings: usize = results.iter().map(|(_, nodes)| nodes.len()).sum();
+    let total_findings: usize = results.iter().map(|r| r.nodes.len()).sum();
     let total_advisories: usize = results
         .iter()
-        .flat_map(|(_, nodes)| nodes.iter())
+        .flat_map(|r| r.nodes.iter())
         .map(|node| node.entry.advisories.len())
         .sum();
 
     // DEBUG: per-repo detail
-    for (repo_id, nodes) in &results {
-        for node in nodes {
+    for output in &results {
+        for node in &output.nodes {
             let sha_display = node
                 .entry
                 .resolved_sha
@@ -102,7 +135,7 @@ pub async fn run_scan_cycle(
                 .map(|a| a.id.as_str())
                 .collect();
             tracing::debug!(
-                repo = %repo_id,
+                repo = %output.repo_id,
                 action = %node.entry.action,
                 resolved_sha = %sha_display,
                 advisories = ?advisory_ids,
@@ -125,21 +158,26 @@ pub async fn run_scan_cycle(
     ScanCycleResult { results, failures }
 }
 
-/// Discover workflow files for a repo. If `repo.workflows` is set, use that
-/// list directly. Otherwise, query the GitHub Contents API for `.github/workflows/`.
+/// Discover workflow files for a repo at a pinned ref. If
+/// `repo.workflows` is set, use that list directly. Otherwise, query
+/// the GitHub Contents API for `.github/workflows/` at `git_ref` so the
+/// listing matches the same commit `fetch_workflow_yaml` will read
+/// from — preventing TOCTOU between the listing and the fetches.
 async fn discover_workflows(
     client: &GitHubClient,
     repo: &RepoEntry,
+    git_ref: &str,
 ) -> anyhow::Result<Vec<String>> {
     if let Some(ref workflows) = repo.workflows {
         return Ok(workflows.clone());
     }
 
     let url = format!(
-        "{}/repos/{}/{}/contents/.github/workflows",
+        "{}/repos/{}/{}/contents/.github/workflows?ref={}",
         client.api_base_url(),
         repo.owner,
-        repo.name
+        repo.name,
+        utf8_percent_encode(git_ref, REF_PATH),
     );
 
     let json = client
@@ -164,22 +202,65 @@ async fn discover_workflows(
     Ok(workflows)
 }
 
-/// Fetch a single workflow YAML file from a repo via raw content.
+/// Fetch a single workflow YAML file from a repo, pinned to the given ref.
 async fn fetch_workflow_yaml(
     client: &GitHubClient,
     owner: &str,
     repo: &str,
+    git_ref: &str,
     workflow: &str,
 ) -> anyhow::Result<String> {
     client
         .get_raw_content(
             owner,
             repo,
-            "HEAD",
+            git_ref,
             &format!(".github/workflows/{workflow}"),
         )
         .await
         .context(format!("failed to fetch workflow {workflow}"))
+}
+
+/// Resolve the default branch and HEAD commit SHA for a repo. Pins all
+/// subsequent reads in this scan cycle to a single commit so a push
+/// mid-scan can't split findings across two commits.
+async fn resolve_repo_head(
+    client: &GitHubClient,
+    owner: &str,
+    name: &str,
+) -> anyhow::Result<(String, String)> {
+    let repo_url = format!("{}/repos/{}/{}", client.api_base_url(), owner, name);
+    let repo_meta = client
+        .api_get(&repo_url)
+        .await
+        .context("failed to fetch repo metadata for default branch")?;
+
+    let default_branch = repo_meta
+        .get("default_branch")
+        .and_then(|v| v.as_str())
+        .context("repo metadata missing default_branch")?
+        .to_string();
+
+    let ref_url = format!(
+        "{}/repos/{}/{}/git/ref/heads/{}",
+        client.api_base_url(),
+        owner,
+        name,
+        utf8_percent_encode(&default_branch, REF_PATH)
+    );
+    let ref_resp = client
+        .api_get(&ref_url)
+        .await
+        .with_context(|| format!("failed to resolve HEAD of {default_branch}"))?;
+
+    let sha = ref_resp
+        .get("object")
+        .and_then(|o| o.get("sha"))
+        .and_then(|v| v.as_str())
+        .context("ref response missing object.sha")?
+        .to_string();
+
+    Ok((sha, format!("refs/heads/{default_branch}")))
 }
 
 /// Build the ghss pipeline from config, following the CLI assembly pattern.
@@ -221,13 +302,20 @@ async fn scan_repo_task(
     depth: Option<usize>,
     concurrency: usize,
     cycle: u64,
-) -> Result<(String, Vec<AuditNode>), (String, anyhow::Error)> {
+) -> RepoOutcome {
     let repo_id = format!("{}/{}", repo.owner, repo.name);
     tracing::info!(cycle, repo = %repo_id, "Scanning repo");
     match scan_repo(client, repo, &repo_id, pipeline, depth, concurrency).await {
-        Ok(nodes) => {
-            tracing::info!(cycle, repo = %repo_id, findings = nodes.len(), "Scan complete for repo");
-            Ok((repo_id, nodes))
+        Ok(output) => {
+            tracing::info!(
+                cycle,
+                repo = %repo_id,
+                findings = output.nodes.len(),
+                workflows = output.attribution.len(),
+                commit_sha = %output.commit_sha,
+                "Scan complete for repo"
+            );
+            Ok(output)
         }
         Err(e) => {
             tracing::warn!(cycle, repo = %repo_id, error = %e, "Failed to scan repo");
@@ -236,8 +324,10 @@ async fn scan_repo_task(
     }
 }
 
-/// Scan a single repo: discover workflows, fetch YAML, parse actions,
-/// deduplicate, and run the walker pipeline.
+/// Scan a single repo: pin commit SHA, discover and parse workflows
+/// (retaining per-workflow attribution), run the deduplicated audit
+/// pipeline once, and emit the per-workflow attribution map alongside
+/// the dedup'd `nodes` set.
 async fn scan_repo(
     client: &GitHubClient,
     repo: &RepoEntry,
@@ -245,24 +335,35 @@ async fn scan_repo(
     pipeline: &ghss::pipeline::Pipeline,
     depth: Option<usize>,
     concurrency: usize,
-) -> anyhow::Result<Vec<AuditNode>> {
-    let workflows = discover_workflows(client, repo).await?;
+) -> anyhow::Result<RepoScanOutput> {
+    let (commit_sha, ref_name) = resolve_repo_head(client, &repo.owner, &repo.name).await?;
+
+    let workflows = discover_workflows(client, repo, &commit_sha).await?;
 
     if workflows.is_empty() {
         tracing::debug!(repo = %repo_id, "No workflow files found");
-        return Ok(vec![]);
+        return Ok(RepoScanOutput {
+            repo_id: repo_id.to_string(),
+            nodes: vec![],
+            attribution: vec![],
+            commit_sha,
+            ref_name,
+        });
     }
 
-    let mut all_actions: BTreeSet<ActionRef> = BTreeSet::new();
+    // Per-workflow attribution: each workflow file maps to its set of
+    // action refs (deduplicated within that workflow).
+    let mut per_workflow: BTreeMap<PathBuf, BTreeSet<ActionRef>> = BTreeMap::new();
 
     for workflow_name in &workflows {
-        match fetch_workflow_yaml(client, &repo.owner, &repo.name, workflow_name)
+        match fetch_workflow_yaml(client, &repo.owner, &repo.name, &commit_sha, workflow_name)
             .await
             .and_then(|yaml| ghss::parse_actions(&yaml))
         {
             Ok(actions) => {
                 tracing::debug!(workflow = %workflow_name, actions = actions.len(), "Parsed workflow");
-                all_actions.extend(actions);
+                let path = PathBuf::from(format!(".github/workflows/{workflow_name}"));
+                per_workflow.entry(path).or_default().extend(actions);
             }
             Err(e) => {
                 tracing::warn!(workflow = %workflow_name, error = %e, "Failed to process workflow");
@@ -270,22 +371,50 @@ async fn scan_repo(
         }
     }
 
-    let actions: Vec<ActionRef> = all_actions.into_iter().collect();
+    // Union across workflows for the pipeline run — audit each unique
+    // action only once per cycle, regardless of workflow count.
+    let unique: BTreeSet<ActionRef> = per_workflow.values().flatten().cloned().collect();
 
-    if actions.is_empty() {
-        return Ok(vec![]);
+    let attribution = build_attribution(&per_workflow);
+
+    if unique.is_empty() {
+        return Ok(RepoScanOutput {
+            repo_id: repo_id.to_string(),
+            nodes: vec![],
+            attribution,
+            commit_sha,
+            ref_name,
+        });
     }
 
     tracing::debug!(
         repo = %repo_id,
-        actions = actions.len(),
+        actions = unique.len(),
         "Running pipeline"
     );
 
     let walker = Walker::new(pipeline.clone(), depth, concurrency);
-    let nodes = walker.walk(actions).await;
+    let nodes = walker.walk(unique.into_iter().collect()).await;
 
-    Ok(nodes)
+    Ok(RepoScanOutput {
+        repo_id: repo_id.to_string(),
+        nodes,
+        attribution,
+        commit_sha,
+        ref_name,
+    })
+}
+
+/// Flatten the parse-time per-workflow map into the
+/// `Vec<(PathBuf, Vec<ActionRef>)>` shape consumed by the SARIF builder
+/// — owned strings only, no node references, no clones of audit trees.
+fn build_attribution(
+    per_workflow: &BTreeMap<PathBuf, BTreeSet<ActionRef>>,
+) -> Vec<(PathBuf, Vec<ActionRef>)> {
+    per_workflow
+        .iter()
+        .map(|(path, action_set)| (path.clone(), action_set.iter().cloned().collect()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -332,5 +461,63 @@ mod tests {
         let pipeline = build_pipeline(&client, &config).unwrap();
         // 4 base + scan + dependency = 6
         assert_eq!(pipeline.stage_count(), 6);
+    }
+
+    #[test]
+    fn ref_path_encodes_unsafe_chars_but_preserves_slash() {
+        // Multi-segment branches like `release/1.0` stay readable.
+        let encoded = utf8_percent_encode("release/1.0", REF_PATH).to_string();
+        assert_eq!(encoded, "release/1.0");
+
+        // `?` and `#` would break URL parsing without encoding.
+        let encoded = utf8_percent_encode("weird?branch", REF_PATH).to_string();
+        assert_eq!(encoded, "weird%3Fbranch");
+
+        let encoded = utf8_percent_encode("foo#bar", REF_PATH).to_string();
+        assert_eq!(encoded, "foo%23bar");
+
+        let encoded = utf8_percent_encode("foo bar", REF_PATH).to_string();
+        assert_eq!(encoded, "foo%20bar");
+
+        let encoded = utf8_percent_encode("a%b", REF_PATH).to_string();
+        assert_eq!(encoded, "a%25b");
+    }
+
+    #[tokio::test]
+    async fn discover_workflows_pins_contents_listing_to_git_ref() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // Reject any listing request that doesn't carry our pinned ref.
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/contents/.github/workflows"))
+            .and(query_param("ref", "deadbeef"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"name": "ci.yml", "type": "file"}
+            ])))
+            .mount(&server)
+            .await;
+
+        // SAFETY: tests run sequentially within the test binary.
+        unsafe {
+            std::env::set_var("GHSS_API_BASE_URL", server.uri());
+        }
+        let client = GitHubClient::new(None);
+        let repo = RepoEntry {
+            owner: "o".to_string(),
+            name: "r".to_string(),
+            workflows: None,
+            upload_sarif: None,
+        };
+
+        let workflows = discover_workflows(&client, &repo, "deadbeef")
+            .await
+            .expect("discover should succeed when pinned ref matches");
+        assert_eq!(workflows, vec!["ci.yml".to_string()]);
+
+        unsafe {
+            std::env::remove_var("GHSS_API_BASE_URL");
+        }
     }
 }
