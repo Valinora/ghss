@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Valinora/ghss/compare/ghss-v0.2.0...ghss-v0.3.0) (2026-05-09)
+
+
+### Features
+
+* add SARIF v2.1.0 output format ([#40](https://github.com/Valinora/ghss/issues/40)) ([c89b10b](https://github.com/Valinora/ghss/commit/c89b10bf1cb7a195f9a4436622921601d8a9def7))
+
 ## [0.2.0](https://github.com/Valinora/ghss/compare/ghss-v0.1.1...ghss-v0.2.0) (2026-05-08)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/Valinora/ghss/compare/ghss-scanner-v0.2.0...ghss-scanner-v0.3.0) (2026-05-09)
+
+
+### Miscellaneous Chores
+
+* **ghss-scanner:** Synchronize ghss versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ghss bumped from 0.2.0 to 0.3.0
+
 ## [0.2.0](https://github.com/Valinora/ghss/compare/ghss-scanner-v0.1.1...ghss-scanner-v0.2.0) (2026-05-08)
 
 
