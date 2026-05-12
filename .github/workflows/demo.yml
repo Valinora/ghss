@@ -10,11 +10,11 @@ jobs:
   composite-expansion:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Audit this workflow with ghss
         uses: Valinora/ghss@6eb702ca5ba2fe10ed214cca00cb4ade1e4bda96
         with:
           severity-threshold: critical
           depth: unlimited
       - name: Get changed files (composite action — expands at depth 1)
-        uses: tj-actions/changed-files@v35
+        uses: tj-actions/changed-files@v47
