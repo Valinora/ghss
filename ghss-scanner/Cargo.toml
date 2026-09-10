@@ -12,25 +12,25 @@ axum = "0.8.8"
 chrono = "0.4.44"
 clap.workspace = true
 clap-verbosity-flag.workspace = true
-cron = "0.16.0"
+cron = "0.17.0"
 futures.workspace = true
 ghss = { version = "0.2.0", path = "../ghss" }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
-opentelemetry = "0.31.0"
+opentelemetry = "0.32.0"
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "migrate"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "postgres", "migrate"] }
 tokio = { workspace = true, features = ["signal"] }
 toml = "1.0.3"
 tracing.workspace = true
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
 libc = "0.2"
 serde_json = { workspace = true }
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
