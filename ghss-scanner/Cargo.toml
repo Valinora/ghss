@@ -15,7 +15,7 @@ clap-verbosity-flag.workspace = true
 cron = "0.16.0"
 futures.workspace = true
 ghss = { version = "0.2.0", path = "../ghss" }
-notify = "8.2.0"
+notify = "9.0.0"
 notify-debouncer-full = "0.7.0"
 opentelemetry = "0.31.0"
 serde.workspace = true
